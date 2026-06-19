@@ -69,6 +69,16 @@ impl TurnManager {
         }
     }
 
+    /// Ask the director whether the scene should end.
+    /// Returns false if no director is configured.
+    pub async fn should_end_scene(&self, conversation: &[Message]) -> Result<bool> {
+        if let Some(director) = &self.director {
+            director.should_end_scene(conversation).await
+        } else {
+            Ok(false)
+        }
+    }
+
     /// Reset the turn counter.
     pub fn reset(&mut self) {
         self.round_robin_index = 0;
