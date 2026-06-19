@@ -1,0 +1,16 @@
+[package]
+name = "rust-agent-agent"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+rust-agent-core = { workspace = true }
+rust-agent-llm = { workspace = true }
+rust-agent-memory = { workspace = true }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
