@@ -21,7 +21,9 @@ impl Director {
 重要规则：
 - 如果玩家直接称呼某个角色或对某角色提问（例如"老板娘，你..."），那个被称呼的角色必须优先回应
 - 只回复角色的名字，不要附带任何解释
-- 如果你认为多个角色应该同时反应，用逗号分隔他们的名字（被直接称呼的角色放在第一位）
+- 如果多个角色需要回应，用逗号分隔名字，顺序就是说话顺序（先写的先说）
+- 后面的角色会看到前面角色的回复再发言，请考虑对话的因果关系来排序
+- 大多数情况下只需要1-2个角色回应即可，不要让所有人都说话
 - 如果你认为场景应该结束，回复 "END_SCENE"
 "#
         .to_string();
@@ -44,7 +46,7 @@ impl Director {
             .collect();
 
         let context = format!(
-            "可用角色: {}\n\n注意：如果玩家在最后一条消息中直接称呼了某个角色，该角色必须回应。\n根据对话内容，谁应该下一个说话？只回复角色名字。",
+            "可用角色: {}\n\n根据对话内容，接下来谁应该说话？用逗号分隔名字，顺序代表说话先后。只输出名字。",
             char_names.join("、")
         );
 
@@ -62,18 +64,22 @@ impl Director {
             .cloned()
             .collect();
         messages.extend(recent);
-        messages.push(Message::user("谁应该下一个说话？"));
+        messages.push(Message::user("接下来谁应该说话？"));
 
         let response = self.client.chat_completion(&messages).await?;
         let response_text = response.content.trim().to_lowercase();
 
-        // Parse the response to find character IDs
-        let mut speakers = Vec::new();
-        for character in available_characters {
-            if response_text.contains(&character.name.to_lowercase()) {
-                speakers.push(character.id);
-            }
-        }
+        // Parse the response to find character IDs, ordered by position in response
+        let mut found: Vec<(usize, Uuid)> = available_characters
+            .iter()
+            .filter_map(|c| {
+                response_text
+                    .find(&c.name.to_lowercase())
+                    .map(|pos| (pos, c.id))
+            })
+            .collect();
+        found.sort_by_key(|(pos, _)| *pos);
+        let mut speakers: Vec<Uuid> = found.into_iter().map(|(_, id)| id).collect();
 
         // Fallback: if no character matched, pick the first available
         if speakers.is_empty() && !available_characters.is_empty() {

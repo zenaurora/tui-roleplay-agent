@@ -13,6 +13,20 @@ pub struct ChatCompletionRequest {
     pub temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stream: Option<bool>,
+    /// DeepSeek thinking mode configuration.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thinking: Option<ThinkingConfig>,
+    /// Reasoning effort level: "high" or "max".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+}
+
+/// Thinking mode configuration for DeepSeek models.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThinkingConfig {
+    /// "enabled" or "disabled"
+    #[serde(rename = "type")]
+    pub thinking_type: String,
 }
 
 /// An API-level message (simplified for the OpenAI format).
@@ -45,6 +59,8 @@ pub struct Choice {
 pub struct ResponseMessage {
     pub role: String,
     pub content: Option<String>,
+    /// Thinking/reasoning content (DeepSeek thinking mode).
+    pub reasoning_content: Option<String>,
 }
 
 /// Token usage information.
@@ -75,6 +91,8 @@ pub struct StreamChoice {
 pub struct Delta {
     pub role: Option<String>,
     pub content: Option<String>,
+    /// Thinking/reasoning content delta (DeepSeek thinking mode).
+    pub reasoning_content: Option<String>,
 }
 
 /// Configuration for the LLM client.
@@ -85,6 +103,10 @@ pub struct LlmClientConfig {
     pub model: String,
     pub max_tokens: usize,
     pub temperature: f32,
+    /// Whether thinking/reasoning mode is enabled.
+    pub thinking_enabled: bool,
+    /// Reasoning effort level: "high" or "max".
+    pub reasoning_effort: String,
 }
 
 impl LlmClientConfig {
@@ -95,6 +117,8 @@ impl LlmClientConfig {
             model: model.into(),
             max_tokens: 4096,
             temperature: 0.8,
+            thinking_enabled: false,
+            reasoning_effort: "high".to_string(),
         }
     }
 }

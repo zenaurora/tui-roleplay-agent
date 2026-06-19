@@ -25,6 +25,9 @@ pub struct Message {
     pub timestamp: DateTime<Utc>,
     /// Optional metadata (tool call id, function name, etc.)
     pub metadata: Option<serde_json::Value>,
+    /// Reasoning/thinking content (from models with thinking mode, e.g. DeepSeek R1).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
 }
 
 impl Message {
@@ -36,6 +39,7 @@ impl Message {
             character_name: None,
             timestamp: Utc::now(),
             metadata: None,
+            reasoning_content: None,
         }
     }
 

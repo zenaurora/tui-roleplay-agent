@@ -107,15 +107,33 @@ fn draw_chat(f: &mut Frame, app: &App, area: Rect) {
 
     let text = Text::from(lines);
 
-    // Calculate scroll: auto-scroll to bottom so latest messages are visible
+    // Calculate scroll: account for line wrapping when estimating total visual lines
     let inner_height = area.height.saturating_sub(2) as usize; // subtract border
-    let total_lines = text.lines.len();
+    let inner_width = area.width.saturating_sub(2) as usize; // subtract border
+
+    // Estimate actual visual lines by accounting for text wrapping
+    let total_visual_lines: usize = text
+        .lines
+        .iter()
+        .map(|line| {
+            let line_width: usize = line.spans.iter().map(|s| UnicodeWidthStr::width(s.content.as_ref())).sum();
+            if inner_width == 0 {
+                1
+            } else {
+                // Each line takes at least 1 visual line, plus wraps
+                ((line_width.max(1)) + inner_width - 1) / inner_width
+            }
+        })
+        .sum();
+
     let scroll = if app.scroll_offset == 0 {
         // Auto-scroll to bottom
-        total_lines.saturating_sub(inner_height) as u16
+        total_visual_lines.saturating_sub(inner_height) as u16
     } else {
         // User manually scrolled up
-        total_lines.saturating_sub(inner_height).saturating_sub(app.scroll_offset as usize) as u16
+        total_visual_lines
+            .saturating_sub(inner_height)
+            .saturating_sub(app.scroll_offset as usize) as u16
     };
 
     let chat = Paragraph::new(text)

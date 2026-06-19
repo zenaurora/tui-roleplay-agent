@@ -103,6 +103,12 @@ async fn main() -> Result<()> {
                     memory.add_message(user_msg, None);
                     turn_count += 1;
 
+                    let active_chars: Vec<Character> = scene_manager
+                        .active_characters()
+                        .into_iter()
+                        .cloned()
+                        .collect();
+
                     // 如果从cmd_rx 接收到了新的指令，就通过event_tx 发送 新的消息给App
                     let _ = event_tx_clone
                         .send(AppEvent::NewMessage(ChatMessage {
@@ -113,14 +119,8 @@ async fn main() -> Result<()> {
                         }))
                         .await;
 
-                    // Get next speaker(s)
+                    // Get next speaker(s) — Director decides order, we execute sequentially
                     let _ = event_tx_clone.send(AppEvent::Loading(true)).await;
-
-                    let active_chars: Vec<Character> = scene_manager
-                        .active_characters()
-                        .into_iter()
-                        .cloned()
-                        .collect();
 
                     let speakers = turn_manager
                         .next_speakers(memory.history(), &active_chars)
@@ -132,6 +132,9 @@ async fn main() -> Result<()> {
                                 vec![active_chars[0].id]
                             }
                         });
+
+                    // Safety cap: max 3 speakers per player turn
+                    let speakers: Vec<_> = speakers.into_iter().take(3).collect();
 
                     // Generate responses from each speaker
                     for speaker_id in speakers {

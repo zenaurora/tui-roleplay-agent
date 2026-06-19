@@ -37,6 +37,8 @@ impl OpenAiClient {
             model: config.model.clone(),
             max_tokens: config.max_tokens,
             temperature: config.temperature,
+            thinking_enabled: config.thinking_enabled,
+            reasoning_effort: config.reasoning_effort.clone(),
         })
     }
 
@@ -57,17 +59,34 @@ impl OpenAiClient {
             .collect()
     }
 
+    /// Build thinking config if enabled.
+    fn thinking_config(&self) -> (Option<ThinkingConfig>, Option<String>) {
+        if self.config.thinking_enabled {
+            (
+                Some(ThinkingConfig {
+                    thinking_type: "enabled".to_string(),
+                }),
+                Some(self.config.reasoning_effort.clone()),
+            )
+        } else {
+            (None, None)
+        }
+    }
+
     /// Send a non-streaming chat completion request.
     pub async fn chat_completion(
         &self,
         messages: &[Message],
     ) -> rust_agent_core::Result<Message> {
+        let (thinking, reasoning_effort) = self.thinking_config();
         let request = ChatCompletionRequest {
             model: self.config.model.clone(),
             messages: Self::to_api_messages(messages),
             max_tokens: Some(self.config.max_tokens),
-            temperature: Some(self.config.temperature),
+            temperature: if self.config.thinking_enabled { None } else { Some(self.config.temperature) },
             stream: Some(false),
+            thinking,
+            reasoning_effort,
         };
 
         let url = format!("{}/chat/completions", self.config.base_url);
@@ -98,13 +117,15 @@ impl OpenAiClient {
             .await
             .map_err(|e| rust_agent_core::LlmError::InvalidResponse(e.to_string()))?;
 
-        let content = completion
-            .choices
-            .first()
+        let choice = completion.choices.first();
+        let content = choice
             .and_then(|c| c.message.content.clone())
             .unwrap_or_default();
+        let reasoning = choice.and_then(|c| c.message.reasoning_content.clone());
 
-        Ok(Message::assistant(content))
+        let mut msg = Message::assistant(content);
+        msg.reasoning_content = reasoning;
+        Ok(msg)
     }
 
     /// Send a streaming chat completion request, returning a stream of chunks.
@@ -112,12 +133,15 @@ impl OpenAiClient {
         &self,
         messages: &[Message],
     ) -> rust_agent_core::Result<ReceiverStream<StreamChunk>> {
+        let (thinking, reasoning_effort) = self.thinking_config();
         let request = ChatCompletionRequest {
             model: self.config.model.clone(),
             messages: Self::to_api_messages(messages),
             max_tokens: Some(self.config.max_tokens),
-            temperature: Some(self.config.temperature),
+            temperature: if self.config.thinking_enabled { None } else { Some(self.config.temperature) },
             stream: Some(true),
+            thinking,
+            reasoning_effort,
         };
 
         let url = format!("{}/chat/completions", self.config.base_url);
@@ -229,12 +253,15 @@ impl OpenAiClient {
         messages: &[Message],
         model: &str,
     ) -> rust_agent_core::Result<Message> {
+        let (thinking, reasoning_effort) = self.thinking_config();
         let request = ChatCompletionRequest {
             model: model.to_string(),
             messages: Self::to_api_messages(messages),
             max_tokens: Some(self.config.max_tokens),
-            temperature: Some(self.config.temperature),
+            temperature: if self.config.thinking_enabled { None } else { Some(self.config.temperature) },
             stream: Some(false),
+            thinking,
+            reasoning_effort,
         };
 
         let url = format!("{}/chat/completions", self.config.base_url);
@@ -264,12 +291,14 @@ impl OpenAiClient {
             .await
             .map_err(|e| rust_agent_core::LlmError::InvalidResponse(e.to_string()))?;
 
-        let content = completion
-            .choices
-            .first()
+        let choice = completion.choices.first();
+        let content = choice
             .and_then(|c| c.message.content.clone())
             .unwrap_or_default();
+        let reasoning = choice.and_then(|c| c.message.reasoning_content.clone());
 
-        Ok(Message::assistant(content))
+        let mut msg = Message::assistant(content);
+        msg.reasoning_content = reasoning;
+        Ok(msg)
     }
 }

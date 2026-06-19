@@ -28,6 +28,12 @@ pub struct LlmConfig {
     /// Temperature for generation.
     #[serde(default = "default_temperature")]
     pub temperature: f32,
+    /// Enable thinking/reasoning mode (DeepSeek R1, etc.)
+    #[serde(default)]
+    pub thinking_enabled: bool,
+    /// Reasoning effort level: "high" or "max". Only used when thinking_enabled is true.
+    #[serde(default = "default_reasoning_effort")]
+    pub reasoning_effort: String,
 }
 
 /// Story/roleplay configuration.
@@ -82,4 +88,8 @@ fn default_temperature() -> f32 {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_reasoning_effort() -> String {
+    "high".to_string()
 }

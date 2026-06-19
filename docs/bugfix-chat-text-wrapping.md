@@ -1,15 +1,15 @@
-# Bugfix: Chat Panel Text Not Wrapping
+# Bugfix: 聊天面板文本不换行
 
-## Problem
+## 问题现象
 
-When the terminal window is narrow, chat messages in the TUI get clipped/truncated instead of wrapping to the next line. Long messages are simply invisible beyond the panel width.
+当终端窗口较窄时，TUI 中的聊天消息会被截断而非自动换行。超出面板宽度的长消息内容直接不可见。
 
-## Root Cause
+## 根本原因
 
-The original code used ratatui's `List` widget with one `Line` per message:
+原始代码使用 ratatui 的 `List` 组件，每条消息对应一个 `Line`：
 
 ```rust
-// BEFORE (broken)
+// BEFORE（有 bug）
 let content = Line::from(vec![
     Span::styled(format!("[{}] ", msg.character_name), header_style),
     Span::styled(&msg.content, style),
@@ -20,30 +20,30 @@ ListItem::new(content)
 let chat = List::new(messages).block(/* ... */);
 ```
 
-**Why this doesn't wrap:**
+**为什么不会换行：**
 
-- `Line` in ratatui = exactly one terminal row. It never breaks.
-- `List` renders each `ListItem` in a single row. It has no word-wrap capability.
-- If the content exceeds the widget width, it is silently clipped.
+- ratatui 中的 `Line` = 恰好一个终端行，永远不会断行。
+- `List` 将每个 `ListItem` 渲染在单行中，没有自动换行能力。
+- 如果内容超出组件宽度，会被静默截断。
 
-This is by design — `List` is meant for short, fixed-height items (like file names, menu options), not multi-line flowing text.
+这是设计如此 —— `List` 适用于短的、固定高度的条目（如文件名、菜单选项），而非多行流动文本。
 
-## Fix
+## 修复方案
 
-Replace `List` with `Paragraph` + `Wrap`:
+用 `Paragraph` + `Wrap` 替换 `List`：
 
 ```rust
-// AFTER (fixed)
+// AFTER（修复后）
 let mut lines: Vec<Line> = Vec::new();
 
 for msg in &app.messages {
-    // Header on its own line
+    // 标题独占一行
     lines.push(Line::from(Span::styled(
         format!("[{}]", msg.character_name),
         header_style,
     )));
 
-    // Content lines (indented)
+    // 内容行（缩进）
     for text_line in msg.content.lines() {
         lines.push(Line::from(Span::styled(
             format!("  {}", text_line),
@@ -51,55 +51,55 @@ for msg in &app.messages {
         )));
     }
 
-    // Blank separator
+    // 空行分隔
     lines.push(Line::from(""));
 }
 
 let text = Text::from(lines);
 
 let chat = Paragraph::new(text)
-    .wrap(Wrap { trim: false })  // <-- enables word wrapping
-    .scroll((scroll, 0))        // <-- vertical scroll support
+    .wrap(Wrap { trim: false })  // <-- 启用自动换行
+    .scroll((scroll, 0))        // <-- 垂直滚动支持
     .block(/* ... */);
 ```
 
-## Key Concepts
+## 关键概念
 
-### `List` vs `Paragraph` in ratatui
+### ratatui 中 `List` 与 `Paragraph` 的区别
 
-| Feature | `List` | `Paragraph` |
+| 特性 | `List` | `Paragraph` |
 |---------|--------|-------------|
-| Word wrap | No | Yes (with `.wrap()`) |
-| Scroll | Built-in selection state | Manual via `.scroll((y, x))` |
-| Use case | Short fixed items | Flowing text content |
+| 自动换行 | 否 | 是（通过 `.wrap()`） |
+| 滚动 | 内置选择状态 | 手动通过 `.scroll((y, x))` |
+| 适用场景 | 短的固定条目 | 流动文本内容 |
 
 ### `Wrap { trim: false }`
 
-- `trim: true` — strips leading whitespace on wrapped lines (default)
-- `trim: false` — preserves all whitespace, important for indented content
+- `trim: true` — 去除换行后的前导空白（默认）
+- `trim: false` — 保留所有空白，对缩进内容很重要
 
-### Scroll calculation
+### 滚动计算
 
-Since `Paragraph` doesn't auto-scroll to the bottom, we compute it manually:
+由于 `Paragraph` 不会自动滚动到底部，需要手动计算：
 
 ```rust
-let inner_height = area.height.saturating_sub(2) as usize; // minus border
+let inner_height = area.height.saturating_sub(2) as usize; // 减去边框
 let total_lines = text.lines.len();
 let scroll = if app.scroll_offset == 0 {
-    // Auto-scroll: show the latest messages
+    // 自动滚动：显示最新消息
     total_lines.saturating_sub(inner_height) as u16
 } else {
-    // User scrolled up via PageUp
+    // 用户通过 PageUp 向上滚动
     total_lines.saturating_sub(inner_height)
         .saturating_sub(app.scroll_offset as usize) as u16
 };
 ```
 
-## Lesson
+## 经验教训
 
-When choosing a ratatui widget for text display:
+选择 ratatui 文本显示组件时：
 
-- **Fixed-height items** (menus, file lists) → `List`
-- **Variable-length text that needs wrapping** (chat, logs, documentation) → `Paragraph` with `Wrap`
+- **固定高度条目**（菜单、文件列表）→ `List`
+- **需要换行的变长文本**（聊天、日志、文档）→ 使用 `Wrap` 的 `Paragraph`
 
-Always check whether your content can exceed the widget width. If yes, `List` will silently clip it — no error, no warning, just invisible text.
+务必检查内容是否会超出组件宽度。如果会，`List` 会静默截断 —— 没有错误、没有警告，只是文本不可见。
