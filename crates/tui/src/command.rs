@@ -11,6 +11,8 @@ pub enum Command {
     Scene(String),
     /// List or show characters.
     Characters,
+    /// Show current model configuration.
+    Model,
     /// Save the current session.
     Save(String),
     /// Load a saved session.
@@ -38,6 +40,7 @@ impl Command {
             "quit" | "q" | "exit" => Some(Command::Quit),
             "scene" => Some(Command::Scene(arg)),
             "characters" | "chars" => Some(Command::Characters),
+            "model" => Some(Command::Model),
             "save" => Some(Command::Save(if arg.is_empty() {
                 "autosave".to_string()
             } else {
@@ -58,6 +61,7 @@ impl Command {
     pub fn help_text() -> &'static str {
         "/scene <name>  - Switch to a scene\n\
          /characters    - List active characters\n\
+         /model         - Show current model configuration\n\
          /save [name]   - Save session\n\
          /load [name]   - Load session\n\
          /clear         - Clear chat history\n\

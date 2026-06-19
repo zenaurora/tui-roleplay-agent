@@ -93,6 +93,22 @@ async fn main() -> Result<()> {
     let protagonist_name = config.story.protagonist_name.clone();
     let mut turn_count: usize = 0;
 
+    // Capture model info for /model command
+    let model_info = format!(
+        "Model: {}\n\
+         Base URL: {}\n\
+         Max tokens: {}\n\
+         Temperature: {}\n\
+         Thinking mode: {}\n\
+         Reasoning effort: {}",
+        config.llm.model,
+        config.llm.base_url,
+        config.llm.max_tokens,
+        config.llm.temperature,
+        if config.llm.thinking_enabled { "ON" } else { "OFF" },
+        config.llm.reasoning_effort,
+    );
+
     // 后台启动一个线程处理 整个进程周期内 通过tx发送的消息
     tokio::spawn(async move {
         while let Some(cmd) = command_rx.recv().await {
@@ -174,8 +190,8 @@ async fn main() -> Result<()> {
 
                     let _ = event_tx_clone.send(AppEvent::Loading(false)).await;
 
-                    // Ask the Director if the scene should end (check after turn 5 minimum)
-                    if turn_count >= 5 {
+                    // Ask the Director if the scene should end (check after turn 8 minimum)
+                    if turn_count >= 8 {
                         if let Ok(true) = turn_manager.should_end_scene(memory.history()).await {
                             let _ = event_tx_clone
                                 .send(AppEvent::SystemMessage(
@@ -213,6 +229,11 @@ async fn main() -> Result<()> {
                 Command::Quit => {
                     let _ = event_tx_clone.send(AppEvent::Quit).await;
                     break;
+                }
+                Command::Model => {
+                    let _ = event_tx_clone
+                        .send(AppEvent::SystemMessage(model_info.clone()))
+                        .await;
                 }
                 _ => {
                     let _ = event_tx_clone

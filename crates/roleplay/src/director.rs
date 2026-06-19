@@ -64,7 +64,28 @@ impl Director {
             .cloned()
             .collect();
         messages.extend(recent);
-        messages.push(Message::user("接下来谁应该说话？"));
+
+        // Detect direct address in the last user message and provide explicit hint
+        let last_user_msg = conversation
+            .iter()
+            .rev()
+            .find(|m| m.role == rust_agent_core::Role::User);
+        let address_hint = last_user_msg.and_then(|msg| {
+            available_characters
+                .iter()
+                .filter_map(|c| msg.content.find(&c.name).map(|pos| (pos, &c.name)))
+                .min_by_key(|(pos, _)| *pos)
+                .map(|(_, name)| name.clone())
+        });
+
+        if let Some(name) = &address_hint {
+            messages.push(Message::user(&format!(
+                "注意：玩家直接称呼了「{}」，该角色必须第一个回应。接下来谁说话？",
+                name
+            )));
+        } else {
+            messages.push(Message::user("接下来谁应该说话？"));
+        }
 
         let response = self.client.chat_completion(&messages).await?;
         let response_text = response.content.trim().to_lowercase();
@@ -91,18 +112,27 @@ impl Director {
 
     /// Check if the scene should end based on conversation flow.
     pub async fn should_end_scene(&self, conversation: &[Message]) -> Result<bool> {
-        let mut messages = vec![Message::system(&self.system_prompt)];
+        let end_scene_prompt = r#"你是叙事导演。请判断当前场景是否应该结束。
+只有满足以下条件之一才能结束场景：
+1. 玩家已经明确揭露了真相（例如指出了真凶并给出证据）
+2. 故事的核心冲突已经彻底解决
+3. 对话已经陷入完全的僵局，无法继续推进
+
+如果玩家仍在收集线索、提问、或对话仍有推进空间，回复 NO。
+只回复 YES 或 NO。"#;
+
+        let mut messages = vec![Message::system(end_scene_prompt)];
 
         let recent: Vec<Message> = conversation
             .iter()
             .rev()
-            .take(10)
+            .take(15)
             .rev()
             .cloned()
             .collect();
         messages.extend(recent);
         messages.push(Message::user(
-            "这个场景应该结束了吗？只回复 YES 或 NO。",
+            "当前场景是否应该结束？只回复 YES 或 NO。",
         ));
 
         let response = self.client.chat_completion(&messages).await?;

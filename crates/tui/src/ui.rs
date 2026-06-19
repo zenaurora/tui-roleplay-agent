@@ -111,7 +111,9 @@ fn draw_chat(f: &mut Frame, app: &App, area: Rect) {
     let inner_height = area.height.saturating_sub(2) as usize; // subtract border
     let inner_width = area.width.saturating_sub(2) as usize; // subtract border
 
-    // Estimate actual visual lines by accounting for text wrapping
+    // Estimate actual visual lines by accounting for text wrapping.
+    // Add +2 buffer because CJK chars (2-wide) at wrap boundaries cause
+    // ratatui to wrap earlier than our integer division predicts.
     let total_visual_lines: usize = text
         .lines
         .iter()
@@ -124,7 +126,8 @@ fn draw_chat(f: &mut Frame, app: &App, area: Rect) {
                 ((line_width.max(1)) + inner_width - 1) / inner_width
             }
         })
-        .sum();
+        .sum::<usize>()
+        + 2; // buffer for CJK wrap estimation errors
 
     let scroll = if app.scroll_offset == 0 {
         // Auto-scroll to bottom
