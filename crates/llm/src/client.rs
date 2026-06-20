@@ -14,13 +14,21 @@ use crate::types::*;
 pub struct OpenAiClient {
     http: Client,
     config: LlmClientConfig,
+    /// Label for logging (e.g. "director", "老板娘").
+    label: String,
 }
 
 impl OpenAiClient {
     /// Create a new client with the given configuration.
     pub fn new(config: LlmClientConfig) -> Self {
         let http = Client::new();
-        Self { http, config }
+        Self { http, config, label: "unknown".to_string() }
+    }
+
+    /// Set the logging label for this client.
+    pub fn with_label(mut self, label: impl Into<String>) -> Self {
+        self.label = label.into();
+        self
     }
 
     /// Create from core LlmConfig, resolving API key from env if needed.
@@ -122,6 +130,18 @@ impl OpenAiClient {
             .and_then(|c| c.message.content.clone())
             .unwrap_or_default();
         let reasoning = choice.and_then(|c| c.message.reasoning_content.clone());
+
+        // Log the LLM call
+        let last_msg_preview = messages.last().map(|m| m.content.as_str()).unwrap_or("");
+        crate::logging::log_llm_call(
+            &self.label,
+            &self.config.model,
+            messages.len(),
+            last_msg_preview,
+            &content,
+            reasoning.as_deref(),
+        )
+        .await;
 
         let mut msg = Message::assistant(content);
         msg.reasoning_content = reasoning;
@@ -296,6 +316,18 @@ impl OpenAiClient {
             .and_then(|c| c.message.content.clone())
             .unwrap_or_default();
         let reasoning = choice.and_then(|c| c.message.reasoning_content.clone());
+
+        // Log the LLM call
+        let last_msg_preview = messages.last().map(|m| m.content.as_str()).unwrap_or("");
+        crate::logging::log_llm_call(
+            &self.label,
+            model,
+            messages.len(),
+            last_msg_preview,
+            &content,
+            reasoning.as_deref(),
+        )
+        .await;
 
         let mut msg = Message::assistant(content);
         msg.reasoning_content = reasoning;

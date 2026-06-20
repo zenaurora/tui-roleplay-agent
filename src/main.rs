@@ -48,17 +48,21 @@ async fn main() -> Result<()> {
     scene_manager.add_scene(scene);
     scene_manager.set_scene(0);
 
-    // Setup turn manager
+    // Setup turn manager (Director gets its own labeled client)
+    let director_client = llm_client.clone().with_label("director");
     let mut turn_manager =
-        TurnManager::new(config.story.turn_strategy.clone()).with_director(llm_client.clone());
+        TurnManager::new(config.story.turn_strategy.clone()).with_director(director_client);
 
     // Setup conversation memory
     let mut memory = ConversationMemory::new();
 
-    // Create character agents
+    // Create character agents (each with a labeled client)
     let character_agents: Vec<CharacterAgent> = characters
         .iter()
-        .map(|c| CharacterAgent::new(c.clone(), llm_client.clone()))
+        .map(|c| {
+            let client = llm_client.clone().with_label(&c.name);
+            CharacterAgent::new(c.clone(), client)
+        })
         .collect();
 
     // Setup TUI channels
