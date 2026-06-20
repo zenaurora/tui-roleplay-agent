@@ -82,7 +82,7 @@ impl MemoryStore {
             .map_err(|e| MemoryError::Storage(e.to_string()))?
         {
             let path = entry.path();
-            if path.extension().map_or(false, |ext| ext == "json") {
+            if path.extension().is_some_and(|ext| ext == "json") {
                 if let Some(stem) = path.file_stem() {
                     saves.push(stem.to_string_lossy().to_string());
                 }

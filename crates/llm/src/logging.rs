@@ -35,7 +35,7 @@ pub async fn log_llm_call(
     reasoning: Option<&str>,
 ) {
     // Best-effort logging: don't crash if it fails
-    if let Err(_) = do_log(
+    if do_log(
         agent_name,
         model,
         messages_sent,
@@ -44,6 +44,7 @@ pub async fn log_llm_call(
         reasoning,
     )
     .await
+    .is_err()
     {
         // Silently ignore logging errors
     }
