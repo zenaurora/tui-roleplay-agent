@@ -3,7 +3,7 @@
 //! This is the main entry point that wires together all the crates.
 
 use anyhow::{Result, anyhow};
-use rust_agent_core::{Agent, AppConfig, Character, Message, Scene, TurnDecision};
+use rust_agent_core::{Agent, AppConfig, Character, CharacterConfig, Message, Scene, TurnDecision};
 use rust_agent_llm::OpenAiClient;
 use rust_agent_memory::ConversationMemory;
 use rust_agent_roleplay::{CharacterAgent, SceneManager, TurnManager};
@@ -30,21 +30,20 @@ async fn main() -> Result<()> {
     // Initialize LLM client
     let llm_client = OpenAiClient::from_config(&config.llm);
 
-    // Setup scene manager with characters
+    // Setup scene manager with characters from config
     let mut scene_manager = SceneManager::new();
-    let characters = create_demo_characters();
+    let characters = characters_from_config(&config.story.characters);
     for character in &characters {
         scene_manager.add_character(character.clone());
     }
 
-    // Create a demo scene
-    let scene = Scene::new("Opening", &config.story.description)
+    // Create scene from config
+    let mut scene = Scene::new("Opening", &config.story.description)
         .with_characters(characters.iter().map(|c| c.id).collect())
-        .with_goals(vec![
-            "旅人通过对话收集线索，找出偷翡翠坠子的人".to_string(),
-            "揭露猎人是真正的小偷".to_string(),
-        ])
-        .with_context("场景：醉仙居客栈大堂，清晨。老板娘在柜台后面焦急踱步，书生在角落低头看书，猎人靠在门边沉默不语。".to_string());
+        .with_goals(config.story.scene_goals.clone());
+    if let Some(ref ctx) = config.story.scene_context {
+        scene = scene.with_context(ctx);
+    }
     scene_manager.add_scene(scene);
     scene_manager.set_scene(0);
 
@@ -297,7 +296,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Load configuration from file or create a default.
+/// Load configuration from file.
 async fn load_config() -> Result<AppConfig> {
     let config_path = std::path::Path::new("config/story.toml");
 
@@ -306,67 +305,26 @@ async fn load_config() -> Result<AppConfig> {
         let config: AppConfig = toml::from_str(&content)?;
         Ok(config)
     } else {
-        return Err(anyhow!("config not exists"));
+        Err(anyhow!("config not exists"))
     }
 }
 
-/// Create demo characters for the default story.
-fn create_demo_characters() -> Vec<Character> {
-    vec![
-        Character::new(
-            "老板娘",
-            "热情、爱八卦、说话带着市井气。会主动提供线索但有时会夸大其词。",
-            "醉仙居的老板娘，经营这家客栈十五年了。翡翠坠子是她亡母留下的遗物，价值连城。她昨晚喝了点酒，睡得很沉，醒来发现坠子不见了。她怀疑是书生偷的，因为书生欠了赌债。",
-        )
-        .with_system_prompt(
-            "你是「醉仙居」客栈的老板娘。你的翡翠坠子昨夜被偷了。\n\
-             性格：热情、爱说话、有点八卦、偶尔夸大其词。\n\
-             你知道的信息：\n\
-             - 坠子放在柜台后面的暗格里，只有你知道位置\n\
-             - 昨晚你喝多了酒，睡得很沉\n\
-             - 书生最近赌博输了很多钱，经常唉声叹气\n\
-             - 猎人昨晚很晚才回来，身上带着泥\n\
-             - 其实你半夜模模糊糊听到了脚步声，但看不清是谁\n\
-             秘密：你昨晚确实把暗格打开给自己看了一眼坠子才睡的，所以暗格可能没锁好。\n\
-             用中文回复，保持角色，每次回复2-3句话。只扮演你自己（老板娘），不要替其他角色说话。"
-        )
-        .with_description("客栈老板娘"),
-        Character::new(
-            "书生",
-            "紧张、书卷气、说话文绉绉。有隐情但不是小偷。",
-            "赶考的书生，因为赌博输了盘缠被困在客栈。他昨晚确实半夜起来过，但只是去院子里背书解压。他看到猎人从后门悄悄进来。",
-        )
-        .with_system_prompt(
-            "你是一个赶考的书生，被困在醉仙居客栈。\n\
-             性格：紧张、文雅、有点胆小、说话文绉绉。\n\
-             你知道的信息：\n\
-             - 你确实欠了赌债，但你绝对没有偷东西\n\
-             - 昨晚你睡不着，半夜去院子里背书\n\
-             - 你在院子里看到猎人从客栈后门悄悄进来，手里拿着什么东西\n\
-             - 你很害怕被冤枉，所以一开始不敢说看到猎人的事\n\
-             秘密：你之所以紧张，是因为赌债的事怕被人知道，不是因为偷窃。如果旅人持续追问或表示信任你，你会透露看到猎人的事。\n\
-             用中文回复，保持角色，每次回复2-3句话。只扮演你自己（书生），不要替其他角色说话。"
-        )
-        .with_description("落魄书生"),
-        Character::new(
-            "猎人",
-            "沉默、直接、不善言辞。是真正的小偷。",
-            "猎人表面上以打猎为生，实际上偶尔会做些偷鸡摸狗的事。他昨晚趁老板娘醉酒，发现暗格没锁好，偷走了翡翠坠子藏在客栈后院的枯井里。",
-        )
-        .with_system_prompt(
-            "你是一个猎人，暂住在醉仙居客栈。你是偷翡翠坠子的人。\n\
-             性格：沉默寡言、回答简短、有点凶、不喜欢被追问。\n\
-             你做了什么：\n\
-             - 昨晚你发现老板娘喝醉了，暗格没锁好\n\
-             - 你偷走了翡翠坠子，藏在客栈后院的枯井里\n\
-             - 你从后门溜回来时以为没人看到\n\
-             你的策略：\n\
-             - 尽量少说话，装作不关心\n\
-             - 如果被直接质问，会反过来指责书生\n\
-             - 如果旅人提到「后门」「枯井」「半夜」等关键词，你会开始慌张，说话出现矛盾\n\
-             - 如果证据确凿（旅人提到有人看到你从后门进来+手里有东西），你会认罪\n\
-             用中文回复，保持角色，每次回复1-2句话，尽量简短。只扮演你自己（猎人），不要替其他角色说话。"
-        )
-        .with_description("沉默猎人"),
-    ]
+/// Convert CharacterConfig entries from TOML into Character objects.
+fn characters_from_config(configs: &[CharacterConfig]) -> Vec<Character> {
+    configs
+        .iter()
+        .map(|c| {
+            let mut character = Character::new(&c.name, &c.personality, &c.backstory)
+                .with_system_prompt(&c.system_prompt);
+
+            if let Some(ref desc) = c.short_description {
+                character = character.with_description(desc);
+            }
+            if let Some(ref model) = c.model {
+                character = character.with_model(model);
+            }
+
+            character
+        })
+        .collect()
 }

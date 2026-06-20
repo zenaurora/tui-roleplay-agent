@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::TurnStrategy;
+use crate::{types::TurnStrategy};
 
 /// Top-level application configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,8 +52,26 @@ pub struct StoryConfig {
     /// Scene definition files.
     #[serde(default)]
     pub scene_files: Vec<String>,
+    #[serde(default)]
+    pub characters: Vec<CharacterConfig>,
+    /// Scene goals/objectives.
+    #[serde(default)]
+    pub scene_goals: Vec<String>,
+    /// Scene context description.
+    pub scene_context: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CharacterConfig {
+    pub name: String,
+    pub personality: String,
+    pub backstory: String,
+    pub system_prompt: String,
+    #[serde(default)]
+    pub short_description: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+}
 /// TUI display configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TuiConfig {
