@@ -1,30 +1,42 @@
-//! Director - a meta-agent that controls narrative flow.
+//! Director - a meta-agent that controls narrative flow via structured JSON decisions.
 
-use rust_agent_core::{Character, Message, Result};
+use rust_agent_core::{Character, Message, Result, TurnDecision};
 use rust_agent_llm::OpenAiClient;
-use uuid::Uuid;
+use serde::Deserialize;
 
-/// The Director decides who speaks next and manages narrative pacing.
+/// The Director decides what happens next in the scene.
 pub struct Director {
     client: OpenAiClient,
     system_prompt: String,
 }
 
+/// Raw JSON structure returned by the Director LLM.
+#[derive(Debug, Deserialize)]
+struct DirectorOutput {
+    #[serde(rename = "type")]
+    decision_type: String,
+    speakers: Option<Vec<String>>,
+}
+
 impl Director {
     pub fn new(client: OpenAiClient) -> Self {
-        let system_prompt = r#"你是一个角色扮演故事的叙事导演。你的职责是：
-1. 根据对话流向决定下一个应该说话的角色
-2. 维持叙事节奏和张力
-3. 确保所有角色获得适当的出场机会
-4. 引导故事朝目标推进
+        let system_prompt = r#"你是叙事导演。每次调用时，你决定接下来发生什么。
 
-重要规则：
-- 如果玩家直接称呼某个角色或对某角色提问（例如"老板娘，你..."），那个被称呼的角色必须优先回应
-- 只回复角色的名字，不要附带任何解释
-- 如果多个角色需要回应，用逗号分隔名字，顺序就是说话顺序（先写的先说）
-- 后面的角色会看到前面角色的回复再发言，请考虑对话的因果关系来排序
-- 大多数情况下只需要1-2个角色回应即可，不要让所有人都说话
-- 如果你认为场景应该结束，回复 "END_SCENE"
+输出一个 JSON 对象（不要输出任何其他内容，不要用 markdown 代码块包裹）：
+
+- 让角色依次说话（后面的角色能看到前面角色的回复）：{"type":"sequential","speakers":["角色名"]}
+- 让多个角色同时说话（他们看不到彼此的回复）：{"type":"parallel","speakers":["角色A","角色B"]}
+- 让玩家说话：{"type":"player"}
+- 结束场景：{"type":"end_scene"}
+
+规则：
+- 如果上一条消息是玩家直接称呼某角色，该角色必须下一个回应
+- 考虑对话因果关系决定顺序
+- 不要让所有人都说话，通常1-2个角色即可
+- 只有谜题解决/冲突完全结束时才 end_scene
+- 场景刚开始时，先让NPC开场欢迎玩家，再给玩家机会说话
+- 玩家说完话之后，通常应该有NPC回应，不要连续让玩家说话
+- 只输出 JSON，不要有任何额外文字
 "#
         .to_string();
 
@@ -34,19 +46,19 @@ impl Director {
         }
     }
 
-    /// Decide which character should speak next.
-    pub async fn decide_next_speaker(
+    /// Decide what happens next in the scene.
+    pub async fn decide_next_action(
         &self,
         conversation: &[Message],
         available_characters: &[Character],
-    ) -> Result<Vec<Uuid>> {
+    ) -> Result<TurnDecision> {
         let char_names: Vec<String> = available_characters
             .iter()
             .map(|c| c.name.clone())
             .collect();
 
         let context = format!(
-            "可用角色: {}\n\n根据对话内容，接下来谁应该说话？用逗号分隔名字，顺序代表说话先后。只输出名字。",
+            "可用角色: {}\n玩家角色名: 旅人\n\n根据对话历史，决定接下来发生什么。只输出一个JSON对象。",
             char_names.join("、")
         );
 
@@ -59,7 +71,7 @@ impl Director {
         let recent: Vec<Message> = conversation
             .iter()
             .rev()
-            .take(10)
+            .take(15)
             .rev()
             .cloned()
             .collect();
@@ -80,62 +92,89 @@ impl Director {
 
         if let Some(name) = &address_hint {
             messages.push(Message::user(&format!(
-                "注意：玩家直接称呼了「{}」，该角色必须第一个回应。接下来谁说话？",
+                "注意：玩家直接称呼了「{}」。输出JSON决定接下来谁说话。",
                 name
             )));
         } else {
-            messages.push(Message::user("接下来谁应该说话？"));
+            messages.push(Message::user("输出JSON决定接下来发生什么。"));
         }
 
         let response = self.client.chat_completion(&messages).await?;
-        let response_text = response.content.trim().to_lowercase();
+        let response_text = response.content.trim();
 
-        // Parse the response to find character IDs, ordered by position in response
-        let mut found: Vec<(usize, Uuid)> = available_characters
-            .iter()
-            .filter_map(|c| {
-                response_text
-                    .find(&c.name.to_lowercase())
-                    .map(|pos| (pos, c.id))
-            })
-            .collect();
-        found.sort_by_key(|(pos, _)| *pos);
-        let mut speakers: Vec<Uuid> = found.into_iter().map(|(_, id)| id).collect();
-
-        // Fallback: if no character matched, pick the first available
-        if speakers.is_empty() && !available_characters.is_empty() {
-            speakers.push(available_characters[0].id);
-        }
-
-        Ok(speakers)
+        // Try to parse JSON from the response
+        self.parse_decision(response_text, available_characters)
     }
 
-    /// Check if the scene should end based on conversation flow.
-    pub async fn should_end_scene(&self, conversation: &[Message]) -> Result<bool> {
-        let end_scene_prompt = r#"你是叙事导演。请判断当前场景是否应该结束。
-只有满足以下条件之一才能结束场景：
-1. 玩家已经明确揭露了真相（例如指出了真凶并给出证据）
-2. 故事的核心冲突已经彻底解决
-3. 对话已经陷入完全的僵局，无法继续推进
+    /// Parse the Director's JSON response into a TurnDecision.
+    fn parse_decision(
+        &self,
+        response_text: &str,
+        available_characters: &[Character],
+    ) -> Result<TurnDecision> {
+        // Strip markdown code fences if present
+        let json_str = response_text
+            .trim_start_matches("```json")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim();
 
-如果玩家仍在收集线索、提问、或对话仍有推进空间，回复 NO。
-只回复 YES 或 NO。"#;
+        // Try to parse the JSON
+        if let Ok(output) = serde_json::from_str::<DirectorOutput>(json_str) {
+            match output.decision_type.as_str() {
+                "player" => return Ok(TurnDecision::Player),
+                "end_scene" => return Ok(TurnDecision::EndScene),
+                "sequential" => {
+                    if let Some(speakers) = output.speakers {
+                        let valid = self.filter_valid_names(&speakers, available_characters);
+                        if !valid.is_empty() {
+                            return Ok(TurnDecision::Sequential(valid));
+                        }
+                    }
+                }
+                "parallel" => {
+                    if let Some(speakers) = output.speakers {
+                        let valid = self.filter_valid_names(&speakers, available_characters);
+                        if !valid.is_empty() {
+                            return Ok(TurnDecision::Parallel(valid));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
 
-        let mut messages = vec![Message::system(end_scene_prompt)];
+        // Fallback: try to find character names in raw text
+        let lower = response_text.to_lowercase();
+        if lower.contains("player") || lower.contains("玩家") {
+            return Ok(TurnDecision::Player);
+        }
+        if lower.contains("end_scene") || lower.contains("结束") {
+            return Ok(TurnDecision::EndScene);
+        }
 
-        let recent: Vec<Message> = conversation
+        // Last resort: pick first available character
+        let fallback = available_characters
+            .first()
+            .map(|c| c.name.clone())
+            .unwrap_or_default();
+        Ok(TurnDecision::Sequential(vec![fallback]))
+    }
+
+    /// Filter speaker names to only those that match available characters.
+    fn filter_valid_names(
+        &self,
+        names: &[String],
+        available_characters: &[Character],
+    ) -> Vec<String> {
+        names
             .iter()
-            .rev()
-            .take(15)
-            .rev()
+            .filter(|name| {
+                available_characters
+                    .iter()
+                    .any(|c| c.name == **name)
+            })
             .cloned()
-            .collect();
-        messages.extend(recent);
-        messages.push(Message::user(
-            "当前场景是否应该结束？只回复 YES 或 NO。",
-        ));
-
-        let response = self.client.chat_completion(&messages).await?;
-        Ok(response.content.trim().to_uppercase().contains("YES"))
+            .collect()
     }
 }

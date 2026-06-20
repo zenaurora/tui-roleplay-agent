@@ -115,3 +115,16 @@ impl Default for TurnStrategy {
         Self::DirectorControlled
     }
 }
+
+/// A single decision from the Director about what happens next.
+#[derive(Debug, Clone)]
+pub enum TurnDecision {
+    /// Characters speak one after another; each sees the previous response.
+    Sequential(Vec<String>),
+    /// Characters speak concurrently; all see the same context snapshot.
+    Parallel(Vec<String>),
+    /// Wait for the player to provide input.
+    Player,
+    /// The scene should end.
+    EndScene,
+}

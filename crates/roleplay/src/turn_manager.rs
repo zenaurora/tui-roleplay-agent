@@ -1,8 +1,7 @@
 //! Turn manager - decides turn order for character responses.
 
-use rust_agent_core::{Character, Message, Result, TurnStrategy};
+use rust_agent_core::{Character, Message, Result, TurnDecision, TurnStrategy};
 use rust_agent_llm::OpenAiClient;
-use uuid::Uuid;
 
 use crate::director::Director;
 
@@ -29,32 +28,32 @@ impl TurnManager {
         self
     }
 
-    /// Decide who speaks next based on the strategy.
-    pub async fn next_speakers(
+    /// Decide what happens next based on the strategy.
+    pub async fn next_action(
         &mut self,
         conversation: &[Message],
         available_characters: &[Character],
-    ) -> Result<Vec<Uuid>> {
+    ) -> Result<TurnDecision> {
         if available_characters.is_empty() {
-            return Ok(Vec::new());
+            return Ok(TurnDecision::Player);
         }
 
         match &self.strategy {
             TurnStrategy::RoundRobin => {
                 let idx = self.round_robin_index % available_characters.len();
                 self.round_robin_index += 1;
-                Ok(vec![available_characters[idx].id])
+                Ok(TurnDecision::Sequential(vec![available_characters[idx].name.clone()]))
             }
             TurnStrategy::DirectorControlled => {
                 if let Some(director) = &self.director {
                     director
-                        .decide_next_speaker(conversation, available_characters)
+                        .decide_next_action(conversation, available_characters)
                         .await
                 } else {
                     // Fallback to round-robin if no director is set
                     let idx = self.round_robin_index % available_characters.len();
                     self.round_robin_index += 1;
-                    Ok(vec![available_characters[idx].id])
+                    Ok(TurnDecision::Sequential(vec![available_characters[idx].name.clone()]))
                 }
             }
             TurnStrategy::Random => {
@@ -64,18 +63,8 @@ impl TurnManager {
                     .unwrap_or_default()
                     .subsec_nanos() as usize;
                 let idx = seed % available_characters.len();
-                Ok(vec![available_characters[idx].id])
+                Ok(TurnDecision::Sequential(vec![available_characters[idx].name.clone()]))
             }
-        }
-    }
-
-    /// Ask the director whether the scene should end.
-    /// Returns false if no director is configured.
-    pub async fn should_end_scene(&self, conversation: &[Message]) -> Result<bool> {
-        if let Some(director) = &self.director {
-            director.should_end_scene(conversation).await
-        } else {
-            Ok(false)
         }
     }
 

@@ -3,7 +3,7 @@
 //! This is the main entry point that wires together all the crates.
 
 use anyhow::{Result, anyhow};
-use rust_agent_core::{Agent, AppConfig, Character, Message, Scene};
+use rust_agent_core::{Agent, AppConfig, Character, Message, Scene, TurnDecision};
 use rust_agent_llm::OpenAiClient;
 use rust_agent_memory::ConversationMemory;
 use rust_agent_roleplay::{CharacterAgent, SceneManager, TurnManager};
@@ -91,7 +91,6 @@ async fn main() -> Result<()> {
     // Spawn the command handler
     let event_tx_clone = event_tx.clone();
     let protagonist_name = config.story.protagonist_name.clone();
-    let mut turn_count: usize = 0;
 
     // Capture model info for /model command
     let model_info = format!(
@@ -109,64 +108,41 @@ async fn main() -> Result<()> {
         config.llm.reasoning_effort,
     );
 
-    // 后台启动一个线程处理 整个进程周期内 通过tx发送的消息
+    // Background task: Director-orchestrated scene loop
     tokio::spawn(async move {
-        while let Some(cmd) = command_rx.recv().await {
-            match cmd {
-                Command::SendMessage(text) => {
-                    // Add user message
-                    let user_msg = Message::user(&text).with_character(&protagonist_name);
-                    memory.add_message(user_msg, None);
-                    turn_count += 1;
+        let active_chars: Vec<Character> = scene_manager
+            .active_characters()
+            .into_iter()
+            .cloned()
+            .collect();
 
-                    let active_chars: Vec<Character> = scene_manager
-                        .active_characters()
-                        .into_iter()
-                        .cloned()
-                        .collect();
+        // Director loop: keeps running until scene ends or quit
+        loop {
+            // Ask Director what happens next
+            let _ = event_tx_clone.send(AppEvent::Loading(true)).await;
 
-                    // 如果从cmd_rx 接收到了新的指令，就通过event_tx 发送 新的消息给App
-                    let _ = event_tx_clone
-                        .send(AppEvent::NewMessage(ChatMessage {
-                            character_name: protagonist_name.clone(),
-                            content: text,
-                            is_user: true,
-                            is_system: false,
-                        }))
-                        .await;
+            let decision = turn_manager
+                .next_action(memory.history(), &active_chars)
+                .await
+                .unwrap_or(TurnDecision::Player);
 
-                    // Get next speaker(s) — Director decides order, we execute sequentially
+            let _ = event_tx_clone.send(AppEvent::Loading(false)).await;
+
+            match decision {
+                TurnDecision::Sequential(names) => {
                     let _ = event_tx_clone.send(AppEvent::Loading(true)).await;
-
-                    let speakers = turn_manager
-                        .next_speakers(memory.history(), &active_chars)
-                        .await
-                        .unwrap_or_else(|_| {
-                            if active_chars.is_empty() {
-                                vec![]
-                            } else {
-                                vec![active_chars[0].id]
-                            }
-                        });
-
-                    // Safety cap: max 3 speakers per player turn
-                    let speakers: Vec<_> = speakers.into_iter().take(3).collect();
-
-                    // Generate responses from each speaker
-                    for speaker_id in speakers {
+                    for name in &names {
                         if let Some(agent) = character_agents
                             .iter()
-                            .find(|a| a.character.id == speaker_id)
+                            .find(|a| &a.character.name == name)
                         {
                             match agent.run(memory.history()).await {
                                 Ok(response) => {
                                     let char_name = response
                                         .character_name
                                         .clone()
-                                        .unwrap_or_else(|| "Unknown".to_string());
-
-                                    memory.add_message(response.clone(), Some(speaker_id));
-
+                                        .unwrap_or_else(|| name.clone());
+                                    memory.add_message(response.clone(), Some(agent.character.id));
                                     let _ = event_tx_clone
                                         .send(AppEvent::NewMessage(ChatMessage {
                                             character_name: char_name,
@@ -178,69 +154,122 @@ async fn main() -> Result<()> {
                                 }
                                 Err(e) => {
                                     let _ = event_tx_clone
-                                        .send(AppEvent::SystemMessage(format!(
-                                            "Error: {}",
-                                            e
-                                        )))
+                                        .send(AppEvent::SystemMessage(format!("Error: {}", e)))
                                         .await;
                                 }
                             }
                         }
                     }
-
                     let _ = event_tx_clone.send(AppEvent::Loading(false)).await;
-
-                    // Ask the Director if the scene should end (check after turn 8 minimum)
-                    if turn_count >= 8 {
-                        if let Ok(true) = turn_manager.should_end_scene(memory.history()).await {
-                            let _ = event_tx_clone
-                                .send(AppEvent::SystemMessage(
-                                    "—— 场景结束 ——\n导演判定本场剧情已完结。感谢游玩！输入 /quit 退出。".to_string(),
-                                ))
-                                .await;
+                }
+                TurnDecision::Parallel(names) => {
+                    let _ = event_tx_clone.send(AppEvent::Loading(true)).await;
+                    // Snapshot context before parallel execution
+                    let history_snapshot: Vec<Message> = memory.history().to_vec();
+                    let mut results = Vec::new();
+                    for name in &names {
+                        if let Some(agent) = character_agents
+                            .iter()
+                            .find(|a| &a.character.name == name)
+                        {
+                            match agent.run(&history_snapshot).await {
+                                Ok(response) => results.push((agent.character.id, response)),
+                                Err(e) => {
+                                    let _ = event_tx_clone
+                                        .send(AppEvent::SystemMessage(format!("Error: {}", e)))
+                                        .await;
+                                }
+                            }
+                        }
+                    }
+                    // Add all results to memory and TUI
+                    for (char_id, response) in results {
+                        let char_name = response
+                            .character_name
+                            .clone()
+                            .unwrap_or_else(|| "Unknown".to_string());
+                        memory.add_message(response.clone(), Some(char_id));
+                        let _ = event_tx_clone
+                            .send(AppEvent::NewMessage(ChatMessage {
+                                character_name: char_name,
+                                content: response.content,
+                                is_user: false,
+                                is_system: false,
+                            }))
+                            .await;
+                    }
+                    let _ = event_tx_clone.send(AppEvent::Loading(false)).await;
+                }
+                TurnDecision::Player => {
+                    // Wait for player input
+                    loop {
+                        match command_rx.recv().await {
+                            Some(Command::SendMessage(text)) => {
+                                let user_msg = Message::user(&text).with_character(&protagonist_name);
+                                memory.add_message(user_msg, None);
+                                let _ = event_tx_clone
+                                    .send(AppEvent::NewMessage(ChatMessage {
+                                        character_name: protagonist_name.clone(),
+                                        content: text,
+                                        is_user: true,
+                                        is_system: false,
+                                    }))
+                                    .await;
+                                break; // Back to Director loop
+                            }
+                            Some(Command::Help) => {
+                                let _ = event_tx_clone
+                                    .send(AppEvent::SystemMessage(Command::help_text().to_string()))
+                                    .await;
+                            }
+                            Some(Command::Clear) => {
+                                memory.clear();
+                                let _ = event_tx_clone
+                                    .send(AppEvent::SystemMessage("Chat cleared.".to_string()))
+                                    .await;
+                            }
+                            Some(Command::Characters) => {
+                                let list: String = active_chars
+                                    .iter()
+                                    .map(|c| format!("- {} ({})", c.name, c.personality))
+                                    .collect::<Vec<_>>()
+                                    .join("\n");
+                                let _ = event_tx_clone
+                                    .send(AppEvent::SystemMessage(format!("Active characters:\n{}", list)))
+                                    .await;
+                            }
+                            Some(Command::Model) => {
+                                let _ = event_tx_clone
+                                    .send(AppEvent::SystemMessage(model_info.clone()))
+                                    .await;
+                            }
+                            Some(Command::Quit) => {
+                                let _ = event_tx_clone.send(AppEvent::Quit).await;
+                                return;
+                            }
+                            None => return, // channel closed
+                            _ => {
+                                let _ = event_tx_clone
+                                    .send(AppEvent::SystemMessage("Command not yet implemented.".to_string()))
+                                    .await;
+                            }
                         }
                     }
                 }
-                Command::Help => {
-                    let _ = event_tx_clone
-                        .send(AppEvent::SystemMessage(Command::help_text().to_string()))
-                        .await;
-                }
-                Command::Clear => {
-                    memory.clear();
-                    let _ = event_tx_clone
-                        .send(AppEvent::SystemMessage("Chat cleared.".to_string()))
-                        .await;
-                }
-                Command::Characters => {
-                    let list: String = scene_manager
-                        .active_characters()
-                        .iter()
-                        .map(|c| format!("- {} ({})", c.name, c.personality))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    let _ = event_tx_clone
-                        .send(AppEvent::SystemMessage(format!(
-                            "Active characters:\n{}",
-                            list
-                        )))
-                        .await;
-                }
-                Command::Quit => {
-                    let _ = event_tx_clone.send(AppEvent::Quit).await;
-                    break;
-                }
-                Command::Model => {
-                    let _ = event_tx_clone
-                        .send(AppEvent::SystemMessage(model_info.clone()))
-                        .await;
-                }
-                _ => {
+                TurnDecision::EndScene => {
                     let _ = event_tx_clone
                         .send(AppEvent::SystemMessage(
-                            "Command not yet implemented.".to_string(),
+                            "—— 场景结束 ——\n导演判定本场剧情已完结。感谢游玩！输入 /quit 退出。".to_string(),
                         ))
                         .await;
+                    // Wait for quit command
+                    while let Some(cmd) = command_rx.recv().await {
+                        if matches!(cmd, Command::Quit) {
+                            let _ = event_tx_clone.send(AppEvent::Quit).await;
+                            return;
+                        }
+                    }
+                    return;
                 }
             }
         }
