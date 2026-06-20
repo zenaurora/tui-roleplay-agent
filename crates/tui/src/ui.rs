@@ -182,13 +182,27 @@ fn draw_sidebar(f: &mut Frame, app: &App, area: Rect) {
 
 /// Draw the input box at the bottom.
 fn draw_input(f: &mut Frame, app: &App, area: Rect) {
+    let (border_color, title) = if app.is_loading {
+        (
+            Color::DarkGray,
+            " Input (locked — wait for NPCs to finish) ",
+        )
+    } else {
+        (
+            Color::Blue,
+            " Input (Enter to send, Ctrl+C to quit) ",
+        )
+    };
+
+    let text_color = if app.is_loading { Color::DarkGray } else { Color::White };
+
     let input = Paragraph::new(app.input.as_str())
-        .style(Style::default().fg(Color::White))
+        .style(Style::default().fg(text_color))
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Blue))
-                .title(" Input (Enter to send, Ctrl+C to quit) "),
+                .border_style(Style::default().fg(border_color))
+                .title(title),
         );
     f.render_widget(input, area);
 

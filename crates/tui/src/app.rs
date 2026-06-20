@@ -123,6 +123,10 @@ impl App {
                 Some(Command::Quit)
             }
             (KeyCode::Enter, _) => {
+                // Block message submission while NPCs are speaking
+                if self.is_loading {
+                    return None;
+                }
                 if let Some(text) = self.submit_input() {
                     if let Some(cmd) = Command::parse(&text) {
                         Some(cmd)
