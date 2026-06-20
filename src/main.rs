@@ -2,7 +2,7 @@
 //!
 //! This is the main entry point that wires together all the crates.
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use rust_agent_core::{Agent, AppConfig, Character, CharacterConfig, Message, Scene, TurnDecision};
 use rust_agent_llm::OpenAiClient;
 use rust_agent_memory::ConversationMemory;
@@ -49,8 +49,8 @@ async fn main() -> Result<()> {
 
     // Setup turn manager (Director gets its own labeled client)
     let director_client = llm_client.clone().with_label("director");
-    let mut turn_manager =
-        TurnManager::new(config.story.turn_strategy.clone()).with_director(director_client);
+    let mut turn_manager = TurnManager::new(config.story.turn_strategy.clone())
+        .with_director_config(director_client, &config.story);
 
     // Setup conversation memory
     let mut memory = ConversationMemory::new();
@@ -107,7 +107,11 @@ async fn main() -> Result<()> {
         config.llm.base_url,
         config.llm.max_tokens,
         config.llm.temperature,
-        if config.llm.thinking_enabled { "ON" } else { "OFF" },
+        if config.llm.thinking_enabled {
+            "ON"
+        } else {
+            "OFF"
+        },
         config.llm.reasoning_effort,
     );
 
@@ -145,9 +149,8 @@ async fn main() -> Result<()> {
                     consecutive_npc_turns += 1;
                     let _ = event_tx_clone.send(AppEvent::Loading(true)).await;
                     for name in &names {
-                        if let Some(agent) = character_agents
-                            .iter()
-                            .find(|a| &a.character.name == name)
+                        if let Some(agent) =
+                            character_agents.iter().find(|a| &a.character.name == name)
                         {
                             match agent.run(memory.history()).await {
                                 Ok(response) => {
@@ -182,9 +185,8 @@ async fn main() -> Result<()> {
                     let history_snapshot: Vec<Message> = memory.history().to_vec();
                     let mut results = Vec::new();
                     for name in &names {
-                        if let Some(agent) = character_agents
-                            .iter()
-                            .find(|a| &a.character.name == name)
+                        if let Some(agent) =
+                            character_agents.iter().find(|a| &a.character.name == name)
                         {
                             match agent.run(&history_snapshot).await {
                                 Ok(response) => results.push((agent.character.id, response)),
@@ -220,7 +222,8 @@ async fn main() -> Result<()> {
                     loop {
                         match command_rx.recv().await {
                             Some(Command::SendMessage(text)) => {
-                                let user_msg = Message::user(&text).with_character(&protagonist_name);
+                                let user_msg =
+                                    Message::user(&text).with_character(&protagonist_name);
                                 memory.add_message(user_msg, None);
                                 let _ = event_tx_clone
                                     .send(AppEvent::NewMessage(ChatMessage {
@@ -250,7 +253,10 @@ async fn main() -> Result<()> {
                                     .collect::<Vec<_>>()
                                     .join("\n");
                                 let _ = event_tx_clone
-                                    .send(AppEvent::SystemMessage(format!("Active characters:\n{}", list)))
+                                    .send(AppEvent::SystemMessage(format!(
+                                        "Active characters:\n{}",
+                                        list
+                                    )))
                                     .await;
                             }
                             Some(Command::Model) => {
@@ -265,7 +271,9 @@ async fn main() -> Result<()> {
                             None => return, // channel closed
                             _ => {
                                 let _ = event_tx_clone
-                                    .send(AppEvent::SystemMessage("Command not yet implemented.".to_string()))
+                                    .send(AppEvent::SystemMessage(
+                                        "Command not yet implemented.".to_string(),
+                                    ))
                                     .await;
                             }
                         }
@@ -274,7 +282,8 @@ async fn main() -> Result<()> {
                 TurnDecision::EndScene => {
                     let _ = event_tx_clone
                         .send(AppEvent::SystemMessage(
-                            "—— 场景结束 ——\n导演判定本场剧情已完结。感谢游玩！输入 /quit 退出。".to_string(),
+                            "—— 场景结束 ——\n导演判定本场剧情已完结。感谢游玩！输入 /quit 退出。"
+                                .to_string(),
                         ))
                         .await;
                     // Wait for quit command

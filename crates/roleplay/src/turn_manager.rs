@@ -1,6 +1,6 @@
 //! Turn manager - decides turn order for character responses.
 
-use rust_agent_core::{Character, Message, Result, TurnDecision, TurnStrategy};
+use rust_agent_core::{Character, Message, Result, StoryConfig, TurnDecision, TurnStrategy};
 use rust_agent_llm::OpenAiClient;
 
 use crate::director::Director;
@@ -22,9 +22,9 @@ impl TurnManager {
         }
     }
 
-    /// Create a TurnManager with a director for DirectorControlled strategy.
-    pub fn with_director(mut self, client: OpenAiClient) -> Self {
-        self.director = Some(Director::new(client));
+    /// Create a TurnManager with a director configured from story settings.
+    pub fn with_director_config(mut self, client: OpenAiClient, story: &StoryConfig) -> Self {
+        self.director = Some(Director::from_story_config(client, story));
         self
     }
 
@@ -42,7 +42,9 @@ impl TurnManager {
             TurnStrategy::RoundRobin => {
                 let idx = self.round_robin_index % available_characters.len();
                 self.round_robin_index += 1;
-                Ok(TurnDecision::Sequential(vec![available_characters[idx].name.clone()]))
+                Ok(TurnDecision::Sequential(vec![available_characters[idx]
+                    .name
+                    .clone()]))
             }
             TurnStrategy::DirectorControlled => {
                 if let Some(director) = &self.director {
@@ -50,10 +52,10 @@ impl TurnManager {
                         .decide_next_action(conversation, available_characters)
                         .await
                 } else {
-                    // Fallback to round-robin if no director is set
-                    let idx = self.round_robin_index % available_characters.len();
-                    self.round_robin_index += 1;
-                    Ok(TurnDecision::Sequential(vec![available_characters[idx].name.clone()]))
+                    Err(rust_agent_core::AgentError::Config(
+                        "DirectorControlled strategy requires story.director configuration"
+                            .to_string(),
+                    ))
                 }
             }
             TurnStrategy::Random => {
@@ -63,7 +65,9 @@ impl TurnManager {
                     .unwrap_or_default()
                     .subsec_nanos() as usize;
                 let idx = seed % available_characters.len();
-                Ok(TurnDecision::Sequential(vec![available_characters[idx].name.clone()]))
+                Ok(TurnDecision::Sequential(vec![available_characters[idx]
+                    .name
+                    .clone()]))
             }
         }
     }

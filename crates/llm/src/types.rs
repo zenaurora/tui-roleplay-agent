@@ -34,8 +34,6 @@ pub struct ThinkingConfig {
 pub struct ApiMessage {
     pub role: String,
     pub content: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
 }
 
 /// A chat completion response.
@@ -110,7 +108,11 @@ pub struct LlmClientConfig {
 }
 
 impl LlmClientConfig {
-    pub fn new(base_url: impl Into<String>, api_key: impl Into<String>, model: impl Into<String>) -> Self {
+    pub fn new(
+        base_url: impl Into<String>,
+        api_key: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
         Self {
             base_url: base_url.into(),
             api_key: api_key.into(),

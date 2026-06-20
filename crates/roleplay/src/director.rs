@@ -1,6 +1,6 @@
 //! Director - a meta-agent that controls narrative flow via structured JSON decisions.
 
-use rust_agent_core::{Character, Message, Result, TurnDecision};
+use rust_agent_core::{Character, Message, Result, StoryConfig, TurnDecision};
 use rust_agent_llm::OpenAiClient;
 use serde::Deserialize;
 
@@ -8,6 +8,12 @@ use serde::Deserialize;
 pub struct Director {
     client: OpenAiClient,
     system_prompt: String,
+    protagonist_name: String,
+    story_title: String,
+    story_description: String,
+    scene_goals: Vec<String>,
+    scene_context: Option<String>,
+    recent_message_count: usize,
 }
 
 /// Raw JSON structure returned by the Director LLM.
@@ -19,31 +25,16 @@ struct DirectorOutput {
 }
 
 impl Director {
-    pub fn new(client: OpenAiClient) -> Self {
-        let system_prompt = r#"你是叙事导演。每次调用时，你决定接下来发生什么。
-
-输出一个 JSON 对象（不要输出任何其他内容，不要用 markdown 代码块包裹）：
-
-- 让角色依次说话（后面的角色能看到前面角色的回复）：{"type":"sequential","speakers":["角色名"]}
-- 让多个角色同时说话（他们看不到彼此的回复）：{"type":"parallel","speakers":["角色A","角色B"]}
-- 让玩家说话：{"type":"player"}
-- 结束场景：{"type":"end_scene"}
-
-规则：
-- 如果上一条消息是玩家直接称呼某角色，该角色必须下一个回应
-- 考虑对话因果关系决定顺序
-- 不要让所有人都说话，通常1-2个角色即可
-- 不要连续选择同一个角色说话，一个角色说完后应该换人或给玩家机会
-- 只有谜题解决/冲突完全结束时才 end_scene
-- 场景刚开始时，先让NPC开场欢迎玩家，再给玩家机会说话
-- 玩家说完话之后，通常应该有1-2个NPC回应，然后给玩家机会说话
-- 只输出 JSON，不要有任何额外文字
-"#
-        .to_string();
-
+    pub fn from_story_config(client: OpenAiClient, story: &StoryConfig) -> Self {
         Self {
             client,
-            system_prompt,
+            system_prompt: story.director.system_prompt.clone(),
+            protagonist_name: story.protagonist_name.clone(),
+            story_title: story.title.clone(),
+            story_description: story.description.clone(),
+            scene_goals: story.scene_goals.clone(),
+            scene_context: story.scene_context.clone(),
+            recent_message_count: story.director.recent_message_count.max(1),
         }
     }
 
@@ -58,10 +49,7 @@ impl Director {
             .map(|c| c.name.clone())
             .collect();
 
-        let context = format!(
-            "可用角色: {}\n玩家角色名: 旅人\n\n根据对话历史，决定接下来发生什么。只输出一个JSON对象。",
-            char_names.join("、")
-        );
+        let context = self.build_context(&char_names);
 
         let mut messages = vec![
             Message::system(&self.system_prompt),
@@ -72,7 +60,7 @@ impl Director {
         let recent: Vec<Message> = conversation
             .iter()
             .rev()
-            .take(15)
+            .take(self.recent_message_count)
             .rev()
             .cloned()
             .collect();
@@ -84,6 +72,29 @@ impl Director {
 
         // Try to parse JSON from the response
         self.parse_decision(response_text, available_characters)
+    }
+
+    fn build_context(&self, character_names: &[String]) -> String {
+        let goals = if self.scene_goals.is_empty() {
+            "无".to_string()
+        } else {
+            self.scene_goals
+                .iter()
+                .map(|goal| format!("- {}", goal))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let scene_context = self.scene_context.as_deref().unwrap_or("无");
+
+        format!(
+            "故事标题: {}\n故事描述: {}\n玩家角色名: {}\n可用NPC角色: {}\n场景目标:\n{}\n场景上下文: {}\n\n根据对话历史，决定接下来发生什么。只输出一个JSON对象。",
+            self.story_title,
+            self.story_description,
+            self.protagonist_name,
+            character_names.join("、"),
+            goals,
+            scene_context
+        )
     }
 
     /// Parse the Director's JSON response into a TurnDecision.
@@ -166,11 +177,7 @@ impl Director {
     ) -> Vec<String> {
         names
             .iter()
-            .filter(|name| {
-                available_characters
-                    .iter()
-                    .any(|c| c.name == **name)
-            })
+            .filter(|name| available_characters.iter().any(|c| c.name == **name))
             .cloned()
             .collect()
     }

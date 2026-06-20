@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{types::TurnStrategy};
+use crate::types::TurnStrategy;
 
 /// Top-level application configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +59,16 @@ pub struct StoryConfig {
     pub scene_goals: Vec<String>,
     /// Scene context description.
     pub scene_context: Option<String>,
+    /// Director behavior configuration.
+    pub director: DirectorConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirectorConfig {
+    /// System prompt for the director.
+    pub system_prompt: String,
+    /// Number of recent conversation messages sent to the director.
+    pub recent_message_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

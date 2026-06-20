@@ -17,7 +17,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // Story info bar
+            Constraint::Length(3), // Story info bar
             Constraint::Min(10),   // Chat + sidebar
             Constraint::Length(3), // Input
         ])
@@ -66,7 +66,9 @@ fn draw_chat(f: &mut Frame, app: &App, area: Rect) {
 
     for msg in &app.messages {
         let style = if msg.is_system {
-            Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC)
+            Style::default()
+                .fg(Color::DarkGray)
+                .add_modifier(Modifier::ITALIC)
         } else if msg.is_user {
             Style::default().fg(Color::Green)
         } else {
@@ -74,11 +76,15 @@ fn draw_chat(f: &mut Frame, app: &App, area: Rect) {
         };
 
         let header_style = if msg.is_user {
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD)
         } else if msg.is_system {
             Style::default().fg(Color::DarkGray)
         } else {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
         };
 
         // Header line with character name
@@ -91,10 +97,7 @@ fn draw_chat(f: &mut Frame, app: &App, area: Rect) {
         // Content lines - split by newline so each paragraph is its own Line
         // (Paragraph + Wrap will handle wrapping within each Line)
         for text_line in msg.content.lines() {
-            lines.push(Line::from(Span::styled(
-                format!("  {}", text_line),
-                style,
-            )));
+            lines.push(Line::from(Span::styled(format!("  {}", text_line), style)));
         }
         // If content is empty, still show an empty line
         if msg.content.is_empty() {
@@ -118,7 +121,11 @@ fn draw_chat(f: &mut Frame, app: &App, area: Rect) {
         .lines
         .iter()
         .map(|line| {
-            let line_width: usize = line.spans.iter().map(|s| UnicodeWidthStr::width(s.content.as_ref())).sum();
+            let line_width: usize = line
+                .spans
+                .iter()
+                .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
+                .sum();
             if inner_width == 0 {
                 1
             } else {
@@ -188,13 +195,14 @@ fn draw_input(f: &mut Frame, app: &App, area: Rect) {
             " Input (locked — wait for NPCs to finish) ",
         )
     } else {
-        (
-            Color::Blue,
-            " Input (Enter to send, Ctrl+C to quit) ",
-        )
+        (Color::Blue, " Input (Enter to send, Ctrl+C to quit) ")
     };
 
-    let text_color = if app.is_loading { Color::DarkGray } else { Color::White };
+    let text_color = if app.is_loading {
+        Color::DarkGray
+    } else {
+        Color::White
+    };
 
     let input = Paragraph::new(app.input.as_str())
         .style(Style::default().fg(text_color))
@@ -210,8 +218,5 @@ fn draw_input(f: &mut Frame, app: &App, area: Rect) {
     let text_before_cursor: String = app.input.chars().take(app.cursor_position).collect();
     let display_width = UnicodeWidthStr::width(text_before_cursor.as_str()) as u16;
 
-    f.set_cursor_position((
-        area.x + display_width + 1,
-        area.y + 1,
-    ));
+    f.set_cursor_position((area.x + display_width + 1, area.y + 1));
 }

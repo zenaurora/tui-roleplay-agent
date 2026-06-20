@@ -22,7 +22,11 @@ impl OpenAiClient {
     /// Create a new client with the given configuration.
     pub fn new(config: LlmClientConfig) -> Self {
         let http = Client::new();
-        Self { http, config, label: "unknown".to_string() }
+        Self {
+            http,
+            config,
+            label: "unknown".to_string(),
+        }
     }
 
     /// Set the logging label for this client.
@@ -61,10 +65,16 @@ impl OpenAiClient {
                     Role::Assistant => "assistant".to_string(),
                     Role::Tool => "tool".to_string(),
                 },
-                content: m.content.clone(),
-                name: m.character_name.clone(),
+                content: Self::format_message_content(m),
             })
             .collect()
+    }
+
+    fn format_message_content(message: &Message) -> String {
+        match &message.character_name {
+            Some(name) if !name.trim().is_empty() => format!("{}: {}", name, message.content),
+            _ => message.content.clone(),
+        }
     }
 
     /// Build thinking config if enabled.
@@ -82,16 +92,17 @@ impl OpenAiClient {
     }
 
     /// Send a non-streaming chat completion request.
-    pub async fn chat_completion(
-        &self,
-        messages: &[Message],
-    ) -> rust_agent_core::Result<Message> {
+    pub async fn chat_completion(&self, messages: &[Message]) -> rust_agent_core::Result<Message> {
         let (thinking, reasoning_effort) = self.thinking_config();
         let request = ChatCompletionRequest {
             model: self.config.model.clone(),
             messages: Self::to_api_messages(messages),
             max_tokens: Some(self.config.max_tokens),
-            temperature: if self.config.thinking_enabled { None } else { Some(self.config.temperature) },
+            temperature: if self.config.thinking_enabled {
+                None
+            } else {
+                Some(self.config.temperature)
+            },
             stream: Some(false),
             thinking,
             reasoning_effort,
@@ -158,7 +169,11 @@ impl OpenAiClient {
             model: self.config.model.clone(),
             messages: Self::to_api_messages(messages),
             max_tokens: Some(self.config.max_tokens),
-            temperature: if self.config.thinking_enabled { None } else { Some(self.config.temperature) },
+            temperature: if self.config.thinking_enabled {
+                None
+            } else {
+                Some(self.config.temperature)
+            },
             stream: Some(true),
             thinking,
             reasoning_effort,
@@ -278,7 +293,11 @@ impl OpenAiClient {
             model: model.to_string(),
             messages: Self::to_api_messages(messages),
             max_tokens: Some(self.config.max_tokens),
-            temperature: if self.config.thinking_enabled { None } else { Some(self.config.temperature) },
+            temperature: if self.config.thinking_enabled {
+                None
+            } else {
+                Some(self.config.temperature)
+            },
             stream: Some(false),
             thinking,
             reasoning_effort,

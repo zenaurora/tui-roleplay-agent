@@ -35,7 +35,16 @@ pub async fn log_llm_call(
     reasoning: Option<&str>,
 ) {
     // Best-effort logging: don't crash if it fails
-    if let Err(_) = do_log(agent_name, model, messages_sent, last_user_msg, response, reasoning).await {
+    if let Err(_) = do_log(
+        agent_name,
+        model,
+        messages_sent,
+        last_user_msg,
+        response,
+        reasoning,
+    )
+    .await
+    {
         // Silently ignore logging errors
     }
 }
