@@ -6,6 +6,14 @@ use serde_json::Value;
 use crate::error::Result;
 use crate::message::Message;
 
+/// Provider-neutral tool metadata exposed to model clients.
+#[derive(Debug, Clone)]
+pub struct ToolSpec {
+    pub name: String,
+    pub description: String,
+    pub parameters: Value,
+}
+
 /// A tool that an agent can invoke.
 #[async_trait]
 pub trait Tool: Send + Sync {

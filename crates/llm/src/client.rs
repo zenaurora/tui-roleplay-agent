@@ -2,7 +2,7 @@
 
 use futures::StreamExt;
 use reqwest::Client;
-use rust_agent_core::{Message, Role, StreamChunk};
+use rust_agent_core::{Message, Role, StreamChunk, ToolSpec};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, error};
@@ -58,14 +58,28 @@ impl OpenAiClient {
     fn to_api_messages(messages: &[Message]) -> Vec<ApiMessage> {
         messages
             .iter()
-            .map(|m| ApiMessage {
-                role: match m.role {
+            .map(|m| {
+                let role = match m.role {
                     Role::System => "system".to_string(),
                     Role::User => "user".to_string(),
                     Role::Assistant => "assistant".to_string(),
                     Role::Tool => "tool".to_string(),
-                },
-                content: Self::format_message_content(m),
+                };
+                let tool_call_id = m.tool_call_id.clone();
+                let tool_calls = m
+                    .tool_calls
+                    .iter()
+                    .cloned()
+                    .map(Into::into)
+                    .collect::<Vec<ApiToolCall>>();
+                let tool_calls = (!tool_calls.is_empty()).then_some(tool_calls);
+
+                ApiMessage {
+                    role,
+                    content: Self::api_message_content(m, tool_calls.as_ref()),
+                    tool_call_id,
+                    tool_calls,
+                }
             })
             .collect()
     }
@@ -74,6 +88,17 @@ impl OpenAiClient {
         match &message.character_name {
             Some(name) if !name.trim().is_empty() => format!("{}: {}", name, message.content),
             _ => message.content.clone(),
+        }
+    }
+
+    fn api_message_content(
+        message: &Message,
+        tool_calls: Option<&Vec<ApiToolCall>>,
+    ) -> Option<String> {
+        if message.role == Role::Assistant && tool_calls.is_some() && message.content.is_empty() {
+            None
+        } else {
+            Some(Self::format_message_content(message))
         }
     }
 
@@ -93,70 +118,17 @@ impl OpenAiClient {
 
     /// Send a non-streaming chat completion request.
     pub async fn chat_completion(&self, messages: &[Message]) -> rust_agent_core::Result<Message> {
-        let (thinking, reasoning_effort) = self.thinking_config();
-        let request = ChatCompletionRequest {
-            model: self.config.model.clone(),
-            messages: Self::to_api_messages(messages),
-            max_tokens: Some(self.config.max_tokens),
-            temperature: if self.config.thinking_enabled {
-                None
-            } else {
-                Some(self.config.temperature)
-            },
-            stream: Some(false),
-            thinking,
-            reasoning_effort,
-        };
+        self.chat_completion_with_tools(messages, &[]).await
+    }
 
-        let url = format!("{}/chat/completions", self.config.base_url);
-        debug!("Sending chat completion request to {}", url);
-
-        let response = self
-            .http
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .header("Content-Type", "application/json")
-            .json(&request)
-            .send()
+    /// Send a non-streaming chat completion request with optional tools.
+    pub async fn chat_completion_with_tools(
+        &self,
+        messages: &[Message],
+        tools: &[ToolSpec],
+    ) -> rust_agent_core::Result<Message> {
+        self.chat_completion_inner(&self.config.model, messages, tools)
             .await
-            .map_err(|e| rust_agent_core::LlmError::Request(e.to_string()))?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            return Err(rust_agent_core::LlmError::Api {
-                status: status.as_u16(),
-                message: body,
-            }
-            .into());
-        }
-
-        let completion: ChatCompletionResponse = response
-            .json()
-            .await
-            .map_err(|e| rust_agent_core::LlmError::InvalidResponse(e.to_string()))?;
-
-        let choice = completion.choices.first();
-        let content = choice
-            .and_then(|c| c.message.content.clone())
-            .unwrap_or_default();
-        let reasoning = choice.and_then(|c| c.message.reasoning_content.clone());
-
-        // Log the LLM call
-        let last_msg_preview = messages.last().map(|m| m.content.as_str()).unwrap_or("");
-        crate::logging::log_llm_call(
-            &self.label,
-            &self.config.model,
-            messages.len(),
-            last_msg_preview,
-            &content,
-            reasoning.as_deref(),
-        )
-        .await;
-
-        let mut msg = Message::assistant(content);
-        msg.reasoning_content = reasoning;
-        Ok(msg)
     }
 
     /// Send a streaming chat completion request, returning a stream of chunks.
@@ -168,6 +140,8 @@ impl OpenAiClient {
         let request = ChatCompletionRequest {
             model: self.config.model.clone(),
             messages: Self::to_api_messages(messages),
+            tools: None,
+            tool_choice: None,
             max_tokens: Some(self.config.max_tokens),
             temperature: if self.config.thinking_enabled {
                 None
@@ -288,10 +262,32 @@ impl OpenAiClient {
         messages: &[Message],
         model: &str,
     ) -> rust_agent_core::Result<Message> {
+        self.chat_completion_with_model_and_tools(messages, model, &[])
+            .await
+    }
+
+    /// Get a completion with a specific model override and optional tools.
+    pub async fn chat_completion_with_model_and_tools(
+        &self,
+        messages: &[Message],
+        model: &str,
+        tools: &[ToolSpec],
+    ) -> rust_agent_core::Result<Message> {
+        self.chat_completion_inner(model, messages, tools).await
+    }
+
+    async fn chat_completion_inner(
+        &self,
+        model: &str,
+        messages: &[Message],
+        tools: &[ToolSpec],
+    ) -> rust_agent_core::Result<Message> {
         let (thinking, reasoning_effort) = self.thinking_config();
         let request = ChatCompletionRequest {
             model: model.to_string(),
             messages: Self::to_api_messages(messages),
+            tools: Self::api_tools(tools),
+            tool_choice: Self::tool_choice(tools),
             max_tokens: Some(self.config.max_tokens),
             temperature: if self.config.thinking_enabled {
                 None
@@ -335,6 +331,7 @@ impl OpenAiClient {
             .and_then(|c| c.message.content.clone())
             .unwrap_or_default();
         let reasoning = choice.and_then(|c| c.message.reasoning_content.clone());
+        let tool_calls = choice.and_then(|c| c.message.tool_calls.clone());
 
         // Log the LLM call
         let last_msg_preview = messages.last().map(|m| m.content.as_str()).unwrap_or("");
@@ -350,6 +347,27 @@ impl OpenAiClient {
 
         let mut msg = Message::assistant(content);
         msg.reasoning_content = reasoning;
+        msg.tool_calls = tool_calls
+            .unwrap_or_default()
+            .into_iter()
+            .map(Into::into)
+            .collect();
         Ok(msg)
+    }
+
+    fn api_tools(tools: &[ToolSpec]) -> Option<Vec<ApiTool>> {
+        if tools.is_empty() {
+            None
+        } else {
+            Some(tools.iter().cloned().map(Into::into).collect())
+        }
+    }
+
+    fn tool_choice(tools: &[ToolSpec]) -> Option<String> {
+        if tools.is_empty() {
+            None
+        } else {
+            Some("auto".to_string())
+        }
     }
 }

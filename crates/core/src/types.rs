@@ -15,6 +15,8 @@ pub struct Character {
     pub short_description: Option<String>,
     /// Model override for this specific character (if different from default).
     pub model: Option<String>,
+    /// Local tools this character is allowed to use.
+    pub allowed_tools: Vec<String>,
 }
 
 impl Character {
@@ -38,6 +40,7 @@ impl Character {
             system_prompt,
             short_description: None,
             model: None,
+            allowed_tools: Vec::new(),
         }
     }
 
@@ -53,6 +56,11 @@ impl Character {
 
     pub fn with_model(mut self, model: impl Into<String>) -> Self {
         self.model = Some(model.into());
+        self
+    }
+
+    pub fn with_allowed_tools(mut self, tools: Vec<String>) -> Self {
+        self.allowed_tools = tools;
         self
     }
 }
@@ -100,20 +108,15 @@ impl Scene {
 }
 
 /// Turn order strategy for the roleplay.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub enum TurnStrategy {
     /// Characters speak in a fixed round-robin order.
     RoundRobin,
     /// A director agent decides who speaks next.
+    #[default]
     DirectorControlled,
     /// Random selection among active characters.
     Random,
-}
-
-impl Default for TurnStrategy {
-    fn default() -> Self {
-        Self::DirectorControlled
-    }
 }
 
 /// A single decision from the Director about what happens next.

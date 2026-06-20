@@ -1158,7 +1158,6 @@ dependencies = [
  "async-trait",
  "futures",
  "rust-agent-core",
- "rust-agent-llm",
  "rust-agent-memory",
  "serde",
  "serde_json",

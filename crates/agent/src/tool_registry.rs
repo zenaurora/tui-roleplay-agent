@@ -1,6 +1,6 @@
 //! Tool registry - manages available tools for agents.
 
-use rust_agent_core::{Result, Tool};
+use rust_agent_core::{Result, Tool, ToolSpec};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -22,6 +22,29 @@ impl ToolRegistry {
         self.tools.insert(tool.name().to_string(), tool);
     }
 
+    /// Create a registry containing only the selected tools.
+    pub fn subset(&self, names: &[String]) -> Self {
+        let tools = names
+            .iter()
+            .filter_map(|name| {
+                self.tools
+                    .get(name)
+                    .map(|tool| (name.clone(), tool.clone()))
+            })
+            .collect();
+        Self { tools }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.tools.is_empty()
+    }
+
+    fn sorted_tools(&self) -> Vec<&Arc<dyn Tool>> {
+        let mut tools = self.tools.values().collect::<Vec<_>>();
+        tools.sort_by_key(|tool| tool.name());
+        tools
+    }
+
     /// Get a tool by name.
     pub fn get(&self, name: &str) -> Option<&Arc<dyn Tool>> {
         self.tools.get(name)
@@ -35,11 +58,11 @@ impl ToolRegistry {
         tool.execute(args).await
     }
 
-    /// Get descriptions of all registered tools (for LLM prompts).
-    pub fn tool_descriptions(&self) -> Vec<ToolDescription> {
-        self.tools
-            .values()
-            .map(|t| ToolDescription {
+    /// Get stable provider-neutral tool specs for prompts or model tool schemas.
+    pub fn tool_specs(&self) -> Vec<ToolSpec> {
+        self.sorted_tools()
+            .into_iter()
+            .map(|t| ToolSpec {
                 name: t.name().to_string(),
                 description: t.description().to_string(),
                 parameters: t.parameters_schema(),
@@ -49,7 +72,10 @@ impl ToolRegistry {
 
     /// List all tool names.
     pub fn tool_names(&self) -> Vec<&str> {
-        self.tools.keys().map(|k| k.as_str()).collect()
+        self.sorted_tools()
+            .into_iter()
+            .map(|tool| tool.name())
+            .collect()
     }
 }
 
@@ -57,12 +83,4 @@ impl Default for ToolRegistry {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Description of a tool for use in prompts.
-#[derive(Debug, Clone)]
-pub struct ToolDescription {
-    pub name: String,
-    pub description: String,
-    pub parameters: Value,
 }

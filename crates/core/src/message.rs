@@ -14,6 +14,28 @@ pub enum Role {
     Tool,
 }
 
+/// A provider-neutral tool call requested by an assistant message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
+}
+
+impl ToolCall {
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        arguments: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            arguments: arguments.into(),
+        }
+    }
+}
+
 /// A single message in a conversation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
@@ -25,6 +47,12 @@ pub struct Message {
     pub timestamp: DateTime<Utc>,
     /// Optional metadata (tool call id, function name, etc.)
     pub metadata: Option<serde_json::Value>,
+    /// Tool calls requested by an assistant message.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<ToolCall>,
+    /// Tool call id answered by a tool message.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
     /// Reasoning/thinking content (from models with thinking mode, e.g. DeepSeek R1).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_content: Option<String>,
@@ -39,6 +67,8 @@ impl Message {
             character_name: None,
             timestamp: Utc::now(),
             metadata: None,
+            tool_calls: Vec::new(),
+            tool_call_id: None,
             reasoning_content: None,
         }
     }
@@ -62,6 +92,16 @@ impl Message {
 
     pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
         self.metadata = Some(metadata);
+        self
+    }
+
+    pub fn with_tool_calls(mut self, tool_calls: Vec<ToolCall>) -> Self {
+        self.tool_calls = tool_calls;
+        self
+    }
+
+    pub fn with_tool_call_id(mut self, tool_call_id: impl Into<String>) -> Self {
+        self.tool_call_id = Some(tool_call_id.into());
         self
     }
 }

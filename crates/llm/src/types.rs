@@ -1,5 +1,6 @@
 //! Types for the LLM API requests and responses.
 
+use rust_agent_core::{ToolCall, ToolSpec};
 use serde::{Deserialize, Serialize};
 
 /// A chat completion request.
@@ -7,6 +8,10 @@ use serde::{Deserialize, Serialize};
 pub struct ChatCompletionRequest {
     pub model: String,
     pub messages: Vec<ApiMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<ApiTool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_tokens: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -33,7 +38,80 @@ pub struct ThinkingConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiMessage {
     pub role: String,
-    pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ApiToolCall>>,
+}
+
+/// A tool exposed to an OpenAI-compatible chat completion request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiTool {
+    #[serde(rename = "type")]
+    pub tool_type: String,
+    pub function: ApiToolFunction,
+}
+
+/// Function metadata for a tool.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiToolFunction {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+}
+
+impl From<ToolSpec> for ApiTool {
+    fn from(spec: ToolSpec) -> Self {
+        Self {
+            tool_type: "function".to_string(),
+            function: ApiToolFunction {
+                name: spec.name,
+                description: spec.description,
+                parameters: spec.parameters,
+            },
+        }
+    }
+}
+
+/// A model-requested tool call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiToolCall {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub tool_type: String,
+    pub function: ApiToolCallFunction,
+}
+
+/// Function call payload inside a tool call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiToolCallFunction {
+    pub name: String,
+    pub arguments: String,
+}
+
+impl From<ToolCall> for ApiToolCall {
+    fn from(call: ToolCall) -> Self {
+        Self {
+            id: call.id,
+            tool_type: "function".to_string(),
+            function: ApiToolCallFunction {
+                name: call.name,
+                arguments: call.arguments,
+            },
+        }
+    }
+}
+
+impl From<ApiToolCall> for ToolCall {
+    fn from(call: ApiToolCall) -> Self {
+        Self {
+            id: call.id,
+            name: call.function.name,
+            arguments: call.function.arguments,
+        }
+    }
 }
 
 /// A chat completion response.
@@ -57,6 +135,7 @@ pub struct Choice {
 pub struct ResponseMessage {
     pub role: String,
     pub content: Option<String>,
+    pub tool_calls: Option<Vec<ApiToolCall>>,
     /// Thinking/reasoning content (DeepSeek thinking mode).
     pub reasoning_content: Option<String>,
 }

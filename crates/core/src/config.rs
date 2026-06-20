@@ -8,6 +8,8 @@ use crate::types::TurnStrategy;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub llm: LlmConfig,
+    #[serde(default)]
+    pub tools: ToolConfig,
     pub story: StoryConfig,
     #[serde(default)]
     pub tui: TuiConfig,
@@ -34,6 +36,17 @@ pub struct LlmConfig {
     /// Reasoning effort level: "high" or "max". Only used when thinking_enabled is true.
     #[serde(default = "default_reasoning_effort")]
     pub reasoning_effort: String,
+}
+
+/// Local tool availability configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ToolConfig {
+    /// Whether local tools can be exposed to character agents.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Global allowlist for tool names. Empty means no tools are globally allowed.
+    #[serde(default)]
+    pub allowed: Vec<String>,
 }
 
 /// Story/roleplay configuration.
@@ -81,6 +94,8 @@ pub struct CharacterConfig {
     pub short_description: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
+    #[serde(default)]
+    pub allowed_tools: Vec<String>,
 }
 /// TUI display configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -3,6 +3,7 @@
 //! This is the main entry point that wires together all the crates.
 
 use anyhow::{anyhow, Result};
+use rust_agent_agent::{basic_tool_registry, ToolRegistry};
 use rust_agent_core::{Agent, AppConfig, Character, CharacterConfig, Message, Scene, TurnDecision};
 use rust_agent_llm::OpenAiClient;
 use rust_agent_memory::ConversationMemory;
@@ -11,6 +12,7 @@ use rust_agent_tui::{
     app::{App, AppEvent, CharacterInfo, ChatMessage},
     command::Command,
 };
+use std::{collections::HashSet, sync::Arc};
 use tokio::sync::mpsc;
 use tracing_subscriber::EnvFilter;
 
@@ -54,15 +56,35 @@ async fn main() -> Result<()> {
 
     // Setup conversation memory
     let mut memory = ConversationMemory::new();
+    let all_tools = if config.tools.enabled {
+        let tools = basic_tool_registry(std::env::current_dir()?)?;
+        validate_known_tools(&tools, &config.tools.allowed, "tools.allowed")?;
+        Some(tools)
+    } else {
+        ensure_tools_not_declared_when_disabled(&config)?;
+        None
+    };
+    let globally_allowed_tools: HashSet<&str> =
+        config.tools.allowed.iter().map(String::as_str).collect();
 
     // Create character agents (each with a labeled client)
     let character_agents: Vec<CharacterAgent> = characters
         .iter()
         .map(|c| {
             let client = llm_client.clone().with_label(&c.name);
-            CharacterAgent::new(c.clone(), client)
+            let agent = CharacterAgent::new(c.clone(), client);
+            let agent = match tools_for_character(
+                &all_tools,
+                &globally_allowed_tools,
+                &c.name,
+                &c.allowed_tools,
+            )? {
+                Some(tools) => agent.with_tools(tools),
+                None => agent,
+            };
+            Ok(agent)
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
 
     // Setup TUI channels
     let (event_tx, event_rx) = mpsc::channel::<AppEvent>(100);
@@ -332,8 +354,85 @@ fn characters_from_config(configs: &[CharacterConfig]) -> Vec<Character> {
             if let Some(ref model) = c.model {
                 character = character.with_model(model);
             }
+            if !c.allowed_tools.is_empty() {
+                character = character.with_allowed_tools(c.allowed_tools.clone());
+            }
 
             character
         })
         .collect()
+}
+
+fn tools_for_character(
+    all_tools: &Option<ToolRegistry>,
+    globally_allowed_tools: &HashSet<&str>,
+    character_name: &str,
+    character_allowed_tools: &[String],
+) -> Result<Option<Arc<ToolRegistry>>> {
+    let Some(all_tools) = all_tools.as_ref() else {
+        if character_allowed_tools.is_empty() {
+            return Ok(None);
+        }
+        return Err(anyhow!(
+            "character `{}` declares allowed_tools, but tools.enabled is false",
+            character_name
+        ));
+    };
+
+    for name in character_allowed_tools {
+        if all_tools.get(name).is_none() {
+            return Err(anyhow!(
+                "unknown tool `{}` in character `{}` allowed_tools. Available tools: {}",
+                name,
+                character_name,
+                all_tools.tool_names().join(", ")
+            ));
+        }
+        if !globally_allowed_tools.contains(name.as_str()) {
+            return Err(anyhow!(
+                "tool `{}` is allowed for character `{}`, but is missing from tools.allowed",
+                name,
+                character_name
+            ));
+        }
+    }
+
+    let allowed = character_allowed_tools.to_vec();
+    let tools = all_tools.subset(&allowed);
+    if tools.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(Arc::new(tools)))
+    }
+}
+
+fn validate_known_tools(registry: &ToolRegistry, names: &[String], source: &str) -> Result<()> {
+    for name in names {
+        if registry.get(name).is_none() {
+            return Err(anyhow!(
+                "unknown tool `{}` in {}. Available tools: {}",
+                name,
+                source,
+                registry.tool_names().join(", ")
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn ensure_tools_not_declared_when_disabled(config: &AppConfig) -> Result<()> {
+    if !config.tools.allowed.is_empty() {
+        return Err(anyhow!("tools.allowed is set, but tools.enabled is false"));
+    }
+
+    for character in &config.story.characters {
+        if !character.allowed_tools.is_empty() {
+            return Err(anyhow!(
+                "character `{}` declares allowed_tools, but tools.enabled is false",
+                character.name
+            ));
+        }
+    }
+
+    Ok(())
 }
