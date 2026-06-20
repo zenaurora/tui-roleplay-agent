@@ -120,20 +120,30 @@ async fn main() -> Result<()> {
             .cloned()
             .collect();
 
+        // Safety: track consecutive NPC turns to prevent infinite loops
+        let mut consecutive_npc_turns: usize = 0;
+        const MAX_NPC_TURNS: usize = 3;
+
         // Director loop: keeps running until scene ends or quit
         loop {
-            // Ask Director what happens next
-            let _ = event_tx_clone.send(AppEvent::Loading(true)).await;
-
-            let decision = turn_manager
-                .next_action(memory.history(), &active_chars)
-                .await
-                .unwrap_or(TurnDecision::Player);
-
-            let _ = event_tx_clone.send(AppEvent::Loading(false)).await;
+            // Safety cap: force player turn if too many consecutive NPC turns
+            let decision = if consecutive_npc_turns >= MAX_NPC_TURNS {
+                consecutive_npc_turns = 0;
+                TurnDecision::Player
+            } else {
+                // Ask Director what happens next
+                let _ = event_tx_clone.send(AppEvent::Loading(true)).await;
+                let d = turn_manager
+                    .next_action(memory.history(), &active_chars)
+                    .await
+                    .unwrap_or(TurnDecision::Player);
+                let _ = event_tx_clone.send(AppEvent::Loading(false)).await;
+                d
+            };
 
             match decision {
                 TurnDecision::Sequential(names) => {
+                    consecutive_npc_turns += 1;
                     let _ = event_tx_clone.send(AppEvent::Loading(true)).await;
                     for name in &names {
                         if let Some(agent) = character_agents
@@ -167,6 +177,7 @@ async fn main() -> Result<()> {
                     let _ = event_tx_clone.send(AppEvent::Loading(false)).await;
                 }
                 TurnDecision::Parallel(names) => {
+                    consecutive_npc_turns += 1;
                     let _ = event_tx_clone.send(AppEvent::Loading(true)).await;
                     // Snapshot context before parallel execution
                     let history_snapshot: Vec<Message> = memory.history().to_vec();
@@ -205,6 +216,7 @@ async fn main() -> Result<()> {
                     let _ = event_tx_clone.send(AppEvent::Loading(false)).await;
                 }
                 TurnDecision::Player => {
+                    consecutive_npc_turns = 0;
                     // Wait for player input
                     loop {
                         match command_rx.recv().await {
@@ -316,7 +328,7 @@ fn create_demo_characters() -> Vec<Character> {
              - 猎人昨晚很晚才回来，身上带着泥\n\
              - 其实你半夜模模糊糊听到了脚步声，但看不清是谁\n\
              秘密：你昨晚确实把暗格打开给自己看了一眼坠子才睡的，所以暗格可能没锁好。\n\
-             用中文回复，保持角色，每次回复2-3句话。"
+             用中文回复，保持角色，每次回复2-3句话。只扮演你自己（老板娘），不要替其他角色说话。"
         )
         .with_description("客栈老板娘"),
         Character::new(
@@ -333,7 +345,7 @@ fn create_demo_characters() -> Vec<Character> {
              - 你在院子里看到猎人从客栈后门悄悄进来，手里拿着什么东西\n\
              - 你很害怕被冤枉，所以一开始不敢说看到猎人的事\n\
              秘密：你之所以紧张，是因为赌债的事怕被人知道，不是因为偷窃。如果旅人持续追问或表示信任你，你会透露看到猎人的事。\n\
-             用中文回复，保持角色，每次回复2-3句话。"
+             用中文回复，保持角色，每次回复2-3句话。只扮演你自己（书生），不要替其他角色说话。"
         )
         .with_description("落魄书生"),
         Character::new(
@@ -353,7 +365,7 @@ fn create_demo_characters() -> Vec<Character> {
              - 如果被直接质问，会反过来指责书生\n\
              - 如果旅人提到「后门」「枯井」「半夜」等关键词，你会开始慌张，说话出现矛盾\n\
              - 如果证据确凿（旅人提到有人看到你从后门进来+手里有东西），你会认罪\n\
-             用中文回复，保持角色，每次回复1-2句话，尽量简短。"
+             用中文回复，保持角色，每次回复1-2句话，尽量简短。只扮演你自己（猎人），不要替其他角色说话。"
         )
         .with_description("沉默猎人"),
     ]

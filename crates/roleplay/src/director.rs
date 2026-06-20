@@ -33,9 +33,10 @@ impl Director {
 - 如果上一条消息是玩家直接称呼某角色，该角色必须下一个回应
 - 考虑对话因果关系决定顺序
 - 不要让所有人都说话，通常1-2个角色即可
+- 不要连续选择同一个角色说话，一个角色说完后应该换人或给玩家机会
 - 只有谜题解决/冲突完全结束时才 end_scene
 - 场景刚开始时，先让NPC开场欢迎玩家，再给玩家机会说话
-- 玩家说完话之后，通常应该有NPC回应，不要连续让玩家说话
+- 玩家说完话之后，通常应该有1-2个NPC回应，然后给玩家机会说话
 - 只输出 JSON，不要有任何额外文字
 "#
         .to_string();
@@ -76,28 +77,7 @@ impl Director {
             .cloned()
             .collect();
         messages.extend(recent);
-
-        // Detect direct address in the last user message and provide explicit hint
-        let last_user_msg = conversation
-            .iter()
-            .rev()
-            .find(|m| m.role == rust_agent_core::Role::User);
-        let address_hint = last_user_msg.and_then(|msg| {
-            available_characters
-                .iter()
-                .filter_map(|c| msg.content.find(&c.name).map(|pos| (pos, &c.name)))
-                .min_by_key(|(pos, _)| *pos)
-                .map(|(_, name)| name.clone())
-        });
-
-        if let Some(name) = &address_hint {
-            messages.push(Message::user(&format!(
-                "注意：玩家直接称呼了「{}」。输出JSON决定接下来谁说话。",
-                name
-            )));
-        } else {
-            messages.push(Message::user("输出JSON决定接下来发生什么。"));
-        }
+        messages.push(Message::user("输出JSON决定接下来发生什么。"));
 
         let response = self.client.chat_completion(&messages).await?;
         let response_text = response.content.trim();
@@ -112,15 +92,11 @@ impl Director {
         response_text: &str,
         available_characters: &[Character],
     ) -> Result<TurnDecision> {
-        // Strip markdown code fences if present
-        let json_str = response_text
-            .trim_start_matches("```json")
-            .trim_start_matches("```")
-            .trim_end_matches("```")
-            .trim();
+        // Extract JSON object from response (LLM may output text around it)
+        let json_str = Self::extract_json(response_text);
 
         // Try to parse the JSON
-        if let Ok(output) = serde_json::from_str::<DirectorOutput>(json_str) {
+        if let Ok(output) = serde_json::from_str::<DirectorOutput>(&json_str) {
             match output.decision_type.as_str() {
                 "player" => return Ok(TurnDecision::Player),
                 "end_scene" => return Ok(TurnDecision::EndScene),
@@ -159,6 +135,27 @@ impl Director {
             .map(|c| c.name.clone())
             .unwrap_or_default();
         Ok(TurnDecision::Sequential(vec![fallback]))
+    }
+
+    /// Extract a JSON object from potentially noisy LLM output.
+    fn extract_json(text: &str) -> String {
+        // Strip markdown code fences
+        let stripped = text
+            .trim_start_matches("```json")
+            .trim_start_matches("```")
+            .trim_end_matches("```")
+            .trim();
+
+        // Try to find a JSON object by locating first '{' and last '}'
+        if let Some(start) = stripped.find('{') {
+            if let Some(end) = stripped.rfind('}') {
+                if end > start {
+                    return stripped[start..=end].to_string();
+                }
+            }
+        }
+
+        stripped.to_string()
     }
 
     /// Filter speaker names to only those that match available characters.
