@@ -12,7 +12,7 @@ pub struct AppConfig {
     pub tools: ToolConfig,
     pub story: StoryConfig,
     #[serde(default)]
-    pub tui: TuiConfig,
+    pub runtime: RuntimeConfig,
 }
 
 /// LLM provider configuration.
@@ -97,26 +97,18 @@ pub struct CharacterConfig {
     #[serde(default)]
     pub allowed_tools: Vec<String>,
 }
-/// TUI display configuration.
+/// Runtime behavior configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TuiConfig {
-    /// Whether to show the character sidebar.
-    #[serde(default = "default_true")]
-    pub show_sidebar: bool,
-    /// Whether to show the story info bar.
-    #[serde(default = "default_true")]
-    pub show_story_bar: bool,
-    /// Typing speed for streaming display (chars per second, 0 = instant).
-    #[serde(default)]
-    pub typing_speed: u32,
+pub struct RuntimeConfig {
+    /// Maximum consecutive NPC turns before forcing a player turn.
+    #[serde(default = "default_max_npc_turns")]
+    pub max_npc_turns: usize,
 }
 
-impl Default for TuiConfig {
+impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
-            show_sidebar: true,
-            show_story_bar: true,
-            typing_speed: 0,
+            max_npc_turns: default_max_npc_turns(),
         }
     }
 }
@@ -129,8 +121,8 @@ fn default_temperature() -> f32 {
     0.8
 }
 
-fn default_true() -> bool {
-    true
+fn default_max_npc_turns() -> usize {
+    3
 }
 
 fn default_reasoning_effort() -> String {

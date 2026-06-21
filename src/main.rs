@@ -138,6 +138,7 @@ async fn main() -> Result<()> {
     );
 
     // Background task: Director-orchestrated scene loop
+    let max_npc_turns = config.runtime.max_npc_turns;
     tokio::spawn(async move {
         let active_chars: Vec<Character> = scene_manager
             .active_characters()
@@ -147,12 +148,11 @@ async fn main() -> Result<()> {
 
         // Safety: track consecutive NPC turns to prevent infinite loops
         let mut consecutive_npc_turns: usize = 0;
-        const MAX_NPC_TURNS: usize = 3;
 
         // Director loop: keeps running until scene ends or quit
         loop {
             // Safety cap: force player turn if too many consecutive NPC turns
-            let decision = if consecutive_npc_turns >= MAX_NPC_TURNS {
+            let decision = if consecutive_npc_turns >= max_npc_turns {
                 consecutive_npc_turns = 0;
                 TurnDecision::Player
             } else {
