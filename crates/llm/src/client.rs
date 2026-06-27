@@ -56,7 +56,7 @@ impl OpenAiClient {
 
     /// Convert internal Messages to API messages.
     fn to_api_messages(messages: &[Message]) -> Vec<ApiMessage> {
-        messages
+        messages    
             .iter()
             .map(|m| {
                 let role = match m.role {
@@ -66,13 +66,13 @@ impl OpenAiClient {
                     Role::Tool => "tool".to_string(),
                 };
                 let tool_call_id = m.tool_call_id.clone();
-                let tool_calls = m
-                    .tool_calls
-                    .iter()
-                    .cloned()
-                    .map(Into::into)
-                    .collect::<Vec<ApiToolCall>>();
-                let tool_calls = (!tool_calls.is_empty()).then_some(tool_calls);
+                let tool_calls = {
+                    if m.tool_calls.is_empty(){
+                        None
+                    } else {
+                        Some(m.tool_calls.iter().cloned().map(Into::into).collect::<Vec<ApiToolCall>>())
+                    }
+                };
 
                 ApiMessage {
                     role,
@@ -116,9 +116,35 @@ impl OpenAiClient {
         }
     }
 
+    fn build_chat_request(
+        &self,
+        model: String,
+        messages: &[Message],
+        tools: &[ToolSpec],
+        stream: bool,
+    ) -> ChatCompletionRequest {
+        let (thinking, reasoning_effort) = self.thinking_config();
+
+        ChatCompletionRequest {
+            model,
+            messages: Self::to_api_messages(messages),
+            tools: Self::api_tools(tools),
+            tool_choice: Self::tool_choice(tools),
+            max_tokens: Some(self.config.max_tokens),
+            temperature: if self.config.thinking_enabled {
+                None
+            } else {
+                Some(self.config.temperature)
+            },
+            stream: Some(stream),
+            thinking,
+            reasoning_effort,
+        }
+    }
+
     /// Send a non-streaming chat completion request.
     pub async fn chat_completion(&self, messages: &[Message]) -> rust_agent_core::Result<Message> {
-        self.chat_completion_with_tools(messages, &[]).await
+        self.chat_completion_inner(&self.config.model, messages, &[]).await
     }
 
     /// Send a non-streaming chat completion request with optional tools.
@@ -136,22 +162,7 @@ impl OpenAiClient {
         &self,
         messages: &[Message],
     ) -> rust_agent_core::Result<ReceiverStream<StreamChunk>> {
-        let (thinking, reasoning_effort) = self.thinking_config();
-        let request = ChatCompletionRequest {
-            model: self.config.model.clone(),
-            messages: Self::to_api_messages(messages),
-            tools: None,
-            tool_choice: None,
-            max_tokens: Some(self.config.max_tokens),
-            temperature: if self.config.thinking_enabled {
-                None
-            } else {
-                Some(self.config.temperature)
-            },
-            stream: Some(true),
-            thinking,
-            reasoning_effort,
-        };
+        let request = self.build_chat_request(self.config.model.clone(), messages, &[], true);
 
         let url = format!("{}/chat/completions", self.config.base_url);
         debug!("Sending streaming request to {}", url);
@@ -282,22 +293,7 @@ impl OpenAiClient {
         messages: &[Message],
         tools: &[ToolSpec],
     ) -> rust_agent_core::Result<Message> {
-        let (thinking, reasoning_effort) = self.thinking_config();
-        let request = ChatCompletionRequest {
-            model: model.to_string(),
-            messages: Self::to_api_messages(messages),
-            tools: Self::api_tools(tools),
-            tool_choice: Self::tool_choice(tools),
-            max_tokens: Some(self.config.max_tokens),
-            temperature: if self.config.thinking_enabled {
-                None
-            } else {
-                Some(self.config.temperature)
-            },
-            stream: Some(false),
-            thinking,
-            reasoning_effort,
-        };
+        let request = self.build_chat_request(model.to_string(), messages, tools, false);
 
         let url = format!("{}/chat/completions", self.config.base_url);
 
