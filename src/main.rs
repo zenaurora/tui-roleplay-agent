@@ -6,7 +6,7 @@ use anyhow::{anyhow, Result};
 use rust_agent_agent::{basic_tool_registry, ToolRegistry};
 use rust_agent_core::{Agent, AppConfig, Character, CharacterConfig, Message, Scene, TurnDecision};
 use rust_agent_llm::OpenAiClient;
-use rust_agent_memory::ConversationMemory;
+use rust_agent_memory::{CompactStats, ConversationMemory, SqliteMemoryStore};
 use rust_agent_roleplay::{CharacterAgent, SceneManager, TurnManager};
 use rust_agent_tui::{
     app::{App, AppEvent, CharacterInfo, ChatMessage},
@@ -29,8 +29,9 @@ async fn main() -> Result<()> {
     // Load configuration
     let config = load_config().await?;
 
-    // Initialize LLM client
+    // Initialize LLM clients
     let llm_client = OpenAiClient::from_config(&config.llm);
+    let compact_client = llm_client.clone().with_label("compact");
 
     // Setup scene manager with characters from config
     let mut scene_manager = SceneManager::new();
@@ -54,8 +55,10 @@ async fn main() -> Result<()> {
     let mut turn_manager = TurnManager::new(config.story.turn_strategy.clone())
         .with_director_config(director_client, &config.story);
 
-    // Setup conversation memory
-    let mut memory = ConversationMemory::new();
+    // Setup conversation memory. SQLite keeps the complete log; in-memory history is the current context view.
+    let session_id = format!("{}-{}", config.story.title, chrono::Utc::now().timestamp());
+    let memory_store = SqliteMemoryStore::open("rust-agent-memory.sqlite3")?;
+    let mut memory = ConversationMemory::with_store(session_id, memory_store);
     let all_tools = if config.tools.enabled {
         let tools = basic_tool_registry(std::env::current_dir()?)?;
         validate_known_tools(&tools, &config.tools.allowed, "tools.allowed")?;
@@ -291,6 +294,26 @@ async fn main() -> Result<()> {
                                 return;
                             }
                             None => return, // channel closed
+                            Some(Command::Compact) => {
+                                let _ = event_tx_clone.send(AppEvent::Loading(true)).await;
+                                let result =
+                                    compact_memory(&compact_client, &mut memory, &config.llm.model)
+                                        .await;
+                                let _ = event_tx_clone.send(AppEvent::Loading(false)).await;
+
+                                let message = match result {
+                                    Ok(stats) => format!(
+                                        "Conversation compacted: messages {} -> {}, estimated tokens {} -> {}. Full history remains in SQLite.",
+                                        stats.before_messages,
+                                        stats.after_messages,
+                                        stats.before_tokens,
+                                        stats.after_tokens
+                                    ),
+                                    Err(e) => format!("Compact failed: {e}"),
+                                };
+
+                                let _ = event_tx_clone.send(AppEvent::SystemMessage(message)).await;
+                            }
                             _ => {
                                 let _ = event_tx_clone
                                     .send(AppEvent::SystemMessage(
@@ -325,6 +348,64 @@ async fn main() -> Result<()> {
     app.run(event_rx, command_tx).await?;
 
     Ok(())
+}
+
+async fn compact_memory(
+    client: &OpenAiClient,
+    memory: &mut ConversationMemory,
+    model: &str,
+) -> Result<CompactStats> {
+    const KEEP_RECENT_MESSAGES: usize = 16;
+
+    if memory.len() <= KEEP_RECENT_MESSAGES {
+        return memory
+            .compact_with_summary(
+                "No compaction needed; the context is already within the recent window."
+                    .to_string(),
+                serde_json::json!({"no_op": true}),
+                KEEP_RECENT_MESSAGES,
+                model,
+            )
+            .map_err(Into::into);
+    }
+
+    let compacted_count = memory.len() - KEEP_RECENT_MESSAGES;
+    let older_context = memory
+        .history()
+        .iter()
+        .take(compacted_count)
+        .map(|msg| {
+            let who = msg
+                .character_name
+                .clone()
+                .unwrap_or_else(|| format!("{:?}", msg.role));
+            format!("{}: {}", who, msg.content)
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    let prompt = vec![
+        Message::system(
+            "You compact roleplay conversation history into a structured memory summary. \
+             Return valid JSON only. Preserve facts, plot state, character states, relationships, \
+             unresolved threads, promises, and important artifacts. Do not invent events.",
+        ),
+        Message::user(format!(
+            "Compact the following older conversation history into JSON with these keys: \
+             story_so_far, current_scene_state, world_facts, character_states, relationships, \
+             unresolved_threads, promises_and_commitments, important_artifacts, do_not_forget.\n\n{}",
+            older_context
+        )),
+    ];
+
+    let response = client.chat_completion(&prompt).await?;
+    let summary_text = response.content.trim().to_string();
+    let summary_json = serde_json::from_str(&summary_text)
+        .unwrap_or_else(|_| serde_json::json!({ "summary_text": summary_text }));
+
+    memory
+        .compact_with_summary(summary_text, summary_json, KEEP_RECENT_MESSAGES, model)
+        .map_err(Into::into)
 }
 
 /// Load configuration from file.

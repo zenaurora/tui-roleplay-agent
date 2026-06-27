@@ -21,6 +21,8 @@ pub enum Command {
     Help,
     /// Clear chat history.
     Clear,
+    /// Compact the chat
+    Compact,
 }
 
 impl Command {
@@ -53,6 +55,7 @@ impl Command {
             })),
             "help" | "h" => Some(Command::Help),
             "clear" => Some(Command::Clear),
+            "compact" => Some(Command::Compact),
             _ => None,
         }
     }
@@ -65,6 +68,7 @@ impl Command {
          /save [name]   - Save session\n\
          /load [name]   - Load session\n\
          /clear         - Clear chat history\n\
+         /compact       - Summarize older memory and keep recent context\n\
          /help          - Show this help\n\
          /quit          - Exit the application"
     }
